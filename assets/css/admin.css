@@ -1,0 +1,15 @@
+.acm-admin { direction: rtl; text-align: right; }
+.acm-admin .nav-tab-wrapper { display: flex; flex-wrap: wrap; gap: 4px; }
+.acm-admin .nav-tab { float: none; margin: 0; }
+.acm-admin .wrap { margin-inline: 0; }
+.acm-admin .acm-table-scroll { overflow-x: auto; }
+.acm-admin .widefat { min-width: 700px; }
+.acm-admin pre { overflow-wrap: anywhere; }
+.acm-admin select, .acm-admin textarea, .acm-admin input.regular-text { max-width: 100%; }
+.acm-admin .form-table th { text-align: right; }
+.acm-admin .acm-inline-action { display: inline-block; margin-block: 4px; }
+.acm-admin .acm-queue-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-block: 12px; }
+@media (max-width: 782px) {
+    .acm-admin .form-table th, .acm-admin .form-table td { display: block; width: auto; }
+    .acm-admin .form-table td { padding-inline: 0; }
+}
