@@ -6,12 +6,15 @@ $hooks = array(); $fired = array(); $allowed = true;
 function add_action( $name, $callback ) { $GLOBALS['hooks'][$name][] = $callback; }
 function do_action( $name ) { $GLOBALS['fired'][] = $name; foreach ( $GLOBALS['hooks'][$name] ?? array() as $callback ) { call_user_func( $callback ); } }
 function register_activation_hook( $file, $callback ) {}
+function register_deactivation_hook( $file, $callback ) { $GLOBALS['deactivation_callback'] = $callback; }
 function plugin_dir_path( $file ) { return dirname( $file ) . '/'; }
 function plugin_dir_url( $file ) { return 'https://example.test/plugin/'; }
 function plugin_basename( $file ) { return 'ai-content-manager/' . basename( $file ); }
 function load_plugin_textdomain( ...$args ) {}
-function get_option( $key, $default = false ) { return array( 'acm_db_version' => '1.3.0', 'acm_capability_version' => '1' )[$key] ?? $default; }
-function is_admin() { return true; }
+function get_option( $key, $default = false ) { return array( 'acm_db_version' => '1.4.0', 'acm_capability_version' => '1', 'acm_campaign_enabled' => '0' )[$key] ?? $default; }
+function is_admin() { return ! in_array( '--cron', $GLOBALS['argv'], true ); }
+function doing_action( $hook ) { return false; }
+function wp_doing_cron() { return false; }
 function current_user_can( $cap ) { return $GLOBALS['allowed']; }
 function __( $value, $domain = '' ) { return $value; }
 function esc_html( $value ) { return htmlspecialchars( $value, ENT_QUOTES, 'UTF-8' ); }
@@ -37,11 +40,19 @@ $_GET = $_POST = $_REQUEST = array(); $_SERVER['REQUEST_METHOD'] = 'POST';
 ob_start();
 require __DIR__ . '/../ai-content-manager.php';
 do_action( 'plugins_loaded' );
+if ( in_array( '--cron', $argv, true ) ) {
+    verify_bootstrap( 1 === count( $hooks['acm_campaign_tick'] ?? array() ) && is_callable( $hooks['acm_campaign_tick'][0] ), 'worker hook registered outside admin without rendering any tab' );
+    verify_bootstrap( empty( $hooks['admin_post_acm_campaign_control'] ) && null === call_user_func( $hooks['acm_campaign_tick'][0] ), 'front-end hook cannot authorize worker outside Cron execution' );
+    verify_bootstrap( is_callable( $deactivation_callback ) && 'AIContentManager\\Services\\BatchProcessor' === $deactivation_callback[0], 'deactivation callback registered by real entry point' );
+    ob_end_flush(); return;
+}
 verify_bootstrap( '' === ob_get_contents(), 'real plugin bootstrap emits no output before headers' );
 $registered = $hooks['admin_post_acm_queue_seo_apply'] ?? array();
 verify_bootstrap( 1 === count( $registered ) && is_callable( $registered[0] ) &&
     $registered[0][0] instanceof AIContentManager\Admin\QueueSeoPage, 'real autoloader resolves namespace and registers SEO handler on plugins_loaded without rendering queue' );
 verify_bootstrap( 1 === count( $hooks['admin_post_acm_queue_category_apply'] ?? array() ) && is_callable( $hooks['admin_post_acm_queue_category_apply'][0] ), 'category repair POST handler registered at bootstrap without queue render' );
+verify_bootstrap( 1 === count( $hooks['admin_post_acm_campaign_control'] ?? array() ) && is_callable( $hooks['admin_post_acm_campaign_control'][0] ), 'campaign POST control registered on admin-post before tab render' );
+verify_bootstrap( empty( $hooks['admin_post_nopriv_acm_campaign_control'] ) && empty( $hooks['wp_ajax_nopriv_acm_campaign_tick'] ), 'no unauthenticated campaign execution endpoint' );
 verify_bootstrap( ! in_array( 'admin_menu', $fired, true ) && ! in_array( 'admin_init', $fired, true ), 'admin-post handler exists before admin_init and without executing admin_menu' );
 AIContentManager\Plugin::instance()->init();
 verify_bootstrap( 1 === count( $hooks['admin_post_acm_queue_seo_apply'] ), 'repeated plugin initialization does not duplicate the SEO handler' );

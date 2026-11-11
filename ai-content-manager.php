@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: مدیریت محتوای هوشمند
- * Description: مدیریت درخواست‌های محتوا، تولید دستی مقاله و پیش‌نمایش خروجی در صف وردپرس.
- * Version: 0.6.2
+ * Description: تولید دستی و کمپین پژوهش‌شده بر اساس کلمه کلیدی، صف و پیش‌نویس نیازمند بازبینی انسانی در وردپرس.
+ * Version: 0.7.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: ai-content-manager
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'ACM_VERSION', '0.6.2' );
+define( 'ACM_VERSION', '0.7.0' );
 define( 'ACM_PLUGIN_FILE', __FILE__ );
 define( 'ACM_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ACM_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -41,6 +41,7 @@ spl_autoload_register(
 );
 
 register_activation_hook( __FILE__, array( 'AIContentManager\\Infrastructure\\Installer', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'AIContentManager\\Services\\BatchProcessor', 'deactivate' ) );
 
 add_action(
     'plugins_loaded',

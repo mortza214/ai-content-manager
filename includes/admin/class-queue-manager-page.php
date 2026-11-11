@@ -30,9 +30,11 @@ final class QueueManagerPage {
     private $seo_page;
     private $category_page;
     private $categories;
+    private $campaigns;
 
     /** @param QueueRepository $repository Queue persistence layer. */
-    public function __construct( $repository, $content_types, $wpml ) {
+    public function __construct( $repository, $content_types, $wpml, $campaigns = null ) {
+        $this->campaigns = $campaigns;
         $this->repository    = $repository;
         $this->content_types = $content_types;
         $this->wpml          = $wpml;
@@ -57,6 +59,7 @@ final class QueueManagerPage {
         $items   = $this->repository->find( $filters, $per_page, ( $page - 1 ) * $per_page );
         $types   = $this->content_types->all();
         $languages = $this->wpml->active_languages();
+        if ( $this->campaigns ) { $this->campaigns->render(); }
         $this->render_preview();
         $this->seo_page->render();
         $this->category_page->render();
@@ -127,7 +130,7 @@ final class QueueManagerPage {
                             <tr>
                                 <td><input type="checkbox" form="acm-queue-bulk-form" name="item_ids[]" value="<?php echo esc_attr( $item['item_id'] ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'انتخاب آیتم %d', 'ai-content-manager' ), $item['item_id'] ) ); ?>"></td>
                                 <td>
-                                    <?php if ( 'pending' === $item['status'] ) : ?>
+                                    <?php if ( 'pending' === $item['status'] && empty( $item['campaign_id'] ) ) : ?>
                                         <button type="button" class="button acm-generate" data-item-id="<?php echo esc_attr( $item['item_id'] ); ?>"><?php esc_html_e( 'تولید مقاله', 'ai-content-manager' ); ?></button>
                                         <span class="acm-generation-message" role="status"></span>
                                     <?php elseif ( in_array( $item['status'], array( 'generated', 'failed', 'trashed' ), true ) ) : ?>
@@ -143,7 +146,7 @@ final class QueueManagerPage {
                                 <td><?php $modes = array( 'manual' => __( 'دستی', 'ai-content-manager' ), 'automatic' => __( 'خودکار', 'ai-content-manager' ), 'hybrid' => __( 'ترکیبی', 'ai-content-manager' ) ); echo esc_html( $modes[ $payload['mode'] ?? 'manual' ] ?? __( 'نامشخص', 'ai-content-manager' ) ); ?></td>
                                 <td><?php echo esc_html( isset( QueueStatus::all()[ $item['status'] ] ) ? QueueStatus::all()[ $item['status'] ] : $item['status'] ); ?></td>
                                 <td><?php $this->render_linked_post( $item ); ?></td>
-                                <td><?php echo esc_html( substr( $item['batch_id'], 0, 8 ) ); ?></td>
+                                <td><?php echo esc_html( substr( $item['batch_id'], 0, 8 ) ); if ( ! empty( $item['campaign_id'] ) ) { echo '<p>' . esc_html( sprintf( __( 'کمپین #%d؛ مرحله: %s؛ بازبینی انسانی الزامی', 'ai-content-manager' ), $item['campaign_id'], CampaignsPage::stage_label( $item['campaign_stage'] ) ) ) . '</p>'; } ?></td>
                                 <td><?php echo esc_html( get_date_from_gmt( $item['created_at'], 'Y-m-d H:i' ) ); ?></td>
                             </tr>
                         <?php endforeach; ?>
@@ -201,6 +204,18 @@ final class QueueManagerPage {
         echo '<div class="wrap"><h2>' . esc_html__( 'پیش‌نمایش خروجی', 'ai-content-manager' ) . '</h2>';
         $payload = json_decode( $item['payload'] ?? '', true );
         echo '<p><strong>' . esc_html__( 'دسته‌بندی انتخاب‌شده در صف: ', 'ai-content-manager' ) . '</strong>' . esc_html( $this->categories->describe( $payload['category'] ?? null ) ) . '</p>';
+        if ( ! empty( $item['campaign_id'] ) ) {
+            echo '<p>' . esc_html( 'کمپین #' . $item['campaign_id'] . '؛ ' . CampaignsPage::stage_label( $item['campaign_stage'] ) . '؛ بازبینی انسانی الزامی است.' ) . '</p><details><summary>منابع و شواهد پژوهش</summary>';
+            $research = json_decode( $item['research_output'] ?? '', true );
+            foreach ( $research['sources'] ?? array() as $source ) {
+                $safe = \AIContentManager\Services\WebResearch::safe_url( $source['url'] ?? '' );
+                echo '<p>' . esc_html( ( $source['title'] ?? 'عنوان هنوز بررسی نشده' ) . '؛ ' . ( ! empty( $source['verified'] ) ? 'شواهد در صفحه یافت شد' : 'هنوز تأیید نشده' ) . '؛ دسترسی (UTC): ' . ( $source['accessed_at'] ?? 'ثبت نشده' ) ) . '</p>';
+                if ( $safe ) { echo '<a target="_blank" rel="noopener noreferrer" href="' . esc_url( $source['url'] ) . '">' . esc_html( $source['url'] ) . '</a>'; }
+                foreach ( $source['evidence'] ?? array() as $evidence ) { echo '<blockquote>' . esc_html( $evidence ) . '</blockquote>'; }
+            }
+            foreach ( $research['claims'] ?? array() as $claim ) { echo '<p>' . esc_html( 'ادعا: ' . $claim['claim'] . '؛ شاهد: ' . $claim['evidence'] ) . '</p>'; }
+            echo '<p>یافتن نقل‌قول، اثبات درستی ادعا نیست؛ اعتبار منبع و برداشت مقاله باید انسانی بررسی شوند.</p></details>';
+        }
         if ( 'trashed' === $item['status'] ) { echo '<p>' . esc_html__( 'این آیتم در زباله‌دان صف است؛ پیش‌نمایش فقط خواندنی است و تولید یا ایجاد پیش‌نویس انجام نمی‌شود.', 'ai-content-manager' ) . '</p>'; }
         if ( ( 'generated' === $item['status'] || ( 'trashed' === $item['status'] && 'generated' === ( $item['previous_status'] ?? '' ) ) ) && is_array( $output ) ) {
             echo '<h2>' . esc_html( $output['title'] ?? '' ) . '</h2>';

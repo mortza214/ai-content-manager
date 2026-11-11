@@ -53,6 +53,8 @@ final class Settings {
         add_settings_field( 'acm_budget_limits', __( 'محدودیت‌ها', 'ai-content-manager' ), array( $this, 'render_budget_fields' ), 'ai-content-manager', 'acm_budget' );
         add_settings_section( 'acm_recovery', __( 'بازیابی صف', 'ai-content-manager' ), '__return_false', 'ai-content-manager' );
         add_settings_field( 'acm_recovery_options', __( 'تنظیمات بازیابی', 'ai-content-manager' ), array( $this, 'render_recovery_fields' ), 'ai-content-manager', 'acm_recovery' );
+        add_settings_section( 'acm_campaign', 'پژوهش و قیمت‌گذاری کمپین', '__return_false', 'ai-content-manager' );
+        add_settings_field( 'acm_campaign_prices', 'تأیید نرخ هزینه', array( $this, 'render_campaign_fields' ), 'ai-content-manager', 'acm_campaign' );
     }
 
     /** Add one option field to its settings section. */
@@ -153,7 +155,34 @@ final class Settings {
             }
         }
 
+        $this->save_campaign_fields( $input );
         return array_merge( $output, \AIContentManager\Services\GenerationPolicy::sanitize( $input ) );
+    }
+
+    private function save_campaign_fields( $input ) {
+        if ( empty( $input['campaign_confirm_prices'] ) ) { return; }
+        $rates = array( 'model' => \AIContentManager\Services\CampaignPricing::MODEL, 'source' => \AIContentManager\Services\CampaignPricing::SOURCE, 'confirmed_at' => time() );
+        foreach ( array( 'input', 'output', 'search' ) as $key ) {
+            $amount = \AIContentManager\Services\CampaignPricing::money( $input[ 'campaign_price_' . $key ] ?? '' );
+            if ( false === $amount || $amount <= 0 || $amount > 1000000000 ) { add_settings_error( self::OPTION_NAME, 'acm_campaign_price', 'نرخ مثبت و معتبر لازم است؛ قیمت کمپین تغییر نکرد.', 'error' ); return; }
+            $rates[ $key ] = $amount;
+        }
+        $domains = $input['campaign_domains'] ?? '';
+        if ( ! is_string( $domains ) || strlen( $domains ) > 2000 ) { add_settings_error( self::OPTION_NAME, 'acm_domains', 'فهرست دامنه‌ها معتبر نیست؛ نرخ و دامنه تغییر نکرد.', 'error' ); return; }
+        $domains = array_values( array_unique( array_filter( array_map( 'trim', preg_split( '/\R/u', strtolower( $domains ) ) ) ) ) );
+        if ( count( $domains ) > 20 ) { add_settings_error( self::OPTION_NAME, 'acm_domains', 'حداکثر بیست دامنه مجاز است؛ تغییر ذخیره نشد.', 'error' ); return; }
+        foreach ( $domains as $domain ) {
+            if ( ! \AIContentManager\Services\WebResearch::safe_url( 'https://' . $domain . '/' ) || false !== strpos( $domain, '/' ) || ! preg_match( '/^[a-z0-9.-]+$/D', $domain ) ) { add_settings_error( self::OPTION_NAME, 'acm_domains', 'فقط نام دامنه عمومی بدون مسیر، پورت و اطلاعات ورود پذیرفته است؛ تغییر ذخیره نشد.', 'error' ); return; }
+        }
+        update_option( 'acm_campaign_pricing', $rates, false ); update_option( 'acm_campaign_domains', $domains, false );
+    }
+    public function render_campaign_fields() {
+        $rates = \AIContentManager\Services\CampaignPricing::snapshot();
+        echo '<p>مدل مستقل کمپین: <code>' . esc_html( \AIContentManager\Services\CampaignPricing::MODEL ) . '</code> با Responses و جست‌وجوی وب. مدل تولید دستی این تنظیم را تغییر نمی‌دهد. کلید و دسترسی حساب به مدل/ابزار لازم است. نرخ‌ها برآوردند؛ صورتحساب حساب OpenAI مرجع نهایی است.</p><p><a href="' . esc_url( \AIContentManager\Services\CampaignPricing::SOURCE ) . '" target="_blank" rel="noopener noreferrer">مرجع رسمی قیمت‌گذاری</a>؛ بررسی کد: ۲۰۲۶/۱۱/۱۱. اعداد پیشنهادی محافظه‌کارانه شامل نرخ ورودی بلند هستند؛ پیش از تأیید، نرخ فعلی حساب را بررسی کنید.</p>';
+        foreach ( array( 'input' => array( 'ورودی، دلار به ازای یک میلیون توکن', '0.20' ), 'output' => array( 'خروجی، دلار به ازای یک میلیون توکن', '0.75' ), 'search' => array( 'جست‌وجو، دلار به ازای هزار فراخوانی ابزار؛ توکن جدا حساب می‌شود', '10.00' ) ) as $key => $field ) {
+            echo '<p><label>' . esc_html( $field[0] ) . ' <input type="number" min="0.000001" max="1000" step="0.000001" name="acm_settings[campaign_price_' . esc_attr( $key ) . ']" value="' . esc_attr( isset( $rates[ $key ] ) ? $rates[ $key ] / 1000000 : $field[1] ) . '"></label></p>';
+        }
+        echo '<p><label>دامنه‌های منابع معتبر؛ اختیاری، هر خط یک دامنه، حداکثر بیست <textarea name="acm_settings[campaign_domains]" rows="4" class="large-text">' . esc_textarea( implode( "\n", get_option( 'acm_campaign_domains', array() ) ) ) . '</textarea></label></p><p><label><input type="checkbox" name="acm_settings[campaign_confirm_prices]" value="1"> نرخ‌ها و دامنه‌ها را بررسی کرده‌ام و برای حداکثر سی روز تأیید می‌کنم.</label></p><p>ذخیره تنظیمات کمپین را شروع نمی‌کند. تغییر نرخ، کمپین فعال را پیش از درخواست بعدی متوقف می‌کند تا برآورد تازه تأیید شود. رزرو هر جست‌وجو تا ۱۳۱۰۷۲ توکن اضافه را احتیاطاً منظور می‌کند؛ مصرف نامشخص آزاد نمی‌شود.</p>';
     }
 
     public function render_budget_fields() {

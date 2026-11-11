@@ -20,7 +20,7 @@ final class QueueRepository {
 
     /** Atomically claim a pending item or finish a claimed generation with its event. */
     public function transition_generation( $item_id, $from, $to, $user_id, $metadata = null, $output = null, $processing_token = null ) {
-        if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
+        if ( ! current_user_can( 'manage_ai_content' ) && ! ( 'generating' === $from && ExecutionContext::may_persist( $item_id ) ) ) { return $this->permission_error(); }
         if ( ! $this->lock_usage() ) { return $this->storage_error(); }
         try {
             return $this->transition_locked( $item_id, $from, $to, $user_id, $metadata, $output, $processing_token );
@@ -189,7 +189,8 @@ final class QueueRepository {
             }
         }
 
-        $sql        = "SELECT item_id, batch_id, content_type, language, status, previous_status, payload, created_by, created_at, updated_at, scheduled_at, post_id, draft_state, trashed_at, trashed_by FROM {$table} WHERE " . implode( ' AND ', $conditions ) . ' ORDER BY created_at DESC, item_id DESC LIMIT %d OFFSET %d';
+        $extra = CampaignRepository::available() ? ', campaign_id, campaign_slot, campaign_stage' : '';
+        $sql        = "SELECT item_id, batch_id, content_type, language, status, previous_status, payload, created_by, created_at, updated_at, scheduled_at, post_id, draft_state, trashed_at, trashed_by{$extra} FROM {$table} WHERE " . implode( ' AND ', $conditions ) . ' ORDER BY created_at DESC, item_id DESC LIMIT %d OFFSET %d';
         $arguments[] = absint( $limit );
         $arguments[] = absint( $offset );
 
@@ -241,8 +242,16 @@ final class QueueRepository {
                 foreach ( $rows as $row ) {
                     $after = (int) $row['record_id'];
                     $data = json_decode( $row['api_metadata'], true );
-                    if ( is_array( $data ) ) { yield $data; }
+                    if ( is_array( $data ) && empty( $data['campaign_step_id'] ) ) { yield $data; }
                 }
+            } while ( count( $rows ) === 500 );
+        }
+        if ( CampaignRepository::available() ) {
+            $after = 0;
+            do {
+                $rows = $wpdb->get_results( $wpdb->prepare( "SELECT step_id AS record_id, api_metadata FROM {$wpdb->prefix}acm_campaign_steps WHERE step_id > %d AND api_metadata IS NOT NULL ORDER BY step_id LIMIT 500", $after ), ARRAY_A );
+                if ( $wpdb->last_error ) { throw new \RuntimeException( 'campaign_usage_read_failed' ); }
+                foreach ( $rows as $row ) { $after = (int) $row['record_id']; $data = json_decode( $row['api_metadata'], true ); if ( is_array( $data ) ) { yield $data; } }
             } while ( count( $rows ) === 500 );
         }
     }
@@ -250,6 +259,7 @@ final class QueueRepository {
     /** Called with the usage lock held. Persist before making any external request. */
     public function reserve_usage( $metadata, $context ) {
         global $wpdb;
+        if ( ! empty( $context['campaign_step_id'] ) ) { return ExecutionContext::active() ? ExecutionContext::repository()->reserve( $metadata, $context ) : $this->permission_error(); }
         if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
         if ( ! empty( $context['item_id'] ) ) {
             $changed = $wpdb->update( $wpdb->prefix . 'acm_queue', array( 'api_metadata' => wp_json_encode( $metadata ) ), array(
@@ -267,6 +277,7 @@ final class QueueRepository {
     /** Find an attempt even if recovery moved it to history while the API was running. */
     public function finish_usage( $metadata, $context ) {
         global $wpdb;
+        if ( ! empty( $context['campaign_step_id'] ) ) { return ( ExecutionContext::repository() ?: new CampaignRepository() )->finish_usage( $metadata, $context ); }
         if ( ! empty( $context['item_id'] ) ) {
             $changed = $wpdb->update( $wpdb->prefix . 'acm_queue', array( 'api_metadata' => wp_json_encode( $metadata ) ), array(
                 'item_id' => absint( $context['item_id'] ), 'status' => 'generating', 'processing_token' => $context['processing_token'],
@@ -282,7 +293,8 @@ final class QueueRepository {
 
     public function count_stale( $cutoff ) {
         global $wpdb;
-        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}acm_queue WHERE status = 'generating' AND updated_at < %s", $cutoff ) );
+        $manual = CampaignRepository::available() ? ' AND campaign_id IS NULL' : '';
+        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}acm_queue WHERE status = 'generating'{$manual} AND updated_at < %s", $cutoff ) );
         return $wpdb->last_error ? $this->storage_error() : (int) $count;
     }
 
@@ -294,7 +306,8 @@ final class QueueRepository {
         $table = $wpdb->prefix . 'acm_queue';
         try {
             $wpdb->query( 'START TRANSACTION' );
-            $items = $wpdb->get_results( $wpdb->prepare( "SELECT item_id, api_metadata FROM {$table} WHERE status = 'generating' AND updated_at < %s ORDER BY item_id LIMIT 100 FOR UPDATE", $cutoff ), ARRAY_A );
+            $manual = CampaignRepository::available() ? ' AND campaign_id IS NULL' : '';
+            $items = $wpdb->get_results( $wpdb->prepare( "SELECT item_id, api_metadata FROM {$table} WHERE status = 'generating'{$manual} AND updated_at < %s ORDER BY item_id LIMIT 100 FOR UPDATE", $cutoff ), ARRAY_A );
             if ( $wpdb->last_error ) { $wpdb->query( 'ROLLBACK' ); return $this->storage_error(); }
             $count = 0;
             foreach ( $items as $item ) {
@@ -317,10 +330,19 @@ final class QueueRepository {
 
     public function lock_item( $item_id ) { return $this->named_lock( 'item:' . (int) $item_id, true ); }
     public function unlock_item( $item_id ) { $this->named_lock( 'item:' . (int) $item_id, false ); }
-    private function named_lock( $scope, $acquire ) {
+    public function lock_worker() { return $this->named_lock( 'worker', true, 0 ); }
+    public function generation_busy() {
+        global $wpdb;
+        $count = $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}acm_queue WHERE status = 'generating'" );
+        return $wpdb->last_error || (int) $count > 0;
+    }
+    public function unlock_worker() { return $this->named_lock( 'worker', false, 0 ); }
+    public function lock_topics() { return $this->named_lock( 'topic-admission', true ); }
+    public function unlock_topics() { return $this->named_lock( 'topic-admission', false ); }
+    private function named_lock( $scope, $acquire, $timeout = 5 ) {
         global $wpdb;
         $key = 'acm_' . md5( $wpdb->prefix . ( defined( 'DB_NAME' ) ? DB_NAME : '' ) . ':' . $scope );
-        $sql = $acquire ? 'SELECT GET_LOCK(%s, 5)' : 'SELECT RELEASE_LOCK(%s)';
+        $sql = $acquire ? 'SELECT GET_LOCK(%s, ' . (int) $timeout . ')' : 'SELECT RELEASE_LOCK(%s)';
         return '1' === (string) $wpdb->get_var( $wpdb->prepare( $sql, $key ) );
     }
 
@@ -461,5 +483,58 @@ final class QueueRepository {
         global $wpdb;
         return $wpdb->insert( $wpdb->prefix . 'acm_queue_events', array( 'item_id' => (int) $item_id, 'status_from' => $from, 'status_to' => $to,
             'message' => sanitize_text_field( $message ), 'created_by' => get_current_user_id(), 'created_at' => current_time( 'mysql', true ) ) );
+    }
+
+    /** Caller owns worker/topic locks and CampaignRepository's result transaction. */
+    public function admit_campaign( $claim, $campaign, $topics ) {
+        global $wpdb;
+        if ( ! ExecutionContext::may_persist( 0 ) ) { return $this->permission_error(); }
+        $config = json_decode( $campaign['config'], true ); $ids = array(); $batch = wp_generate_uuid4();
+        foreach ( $topics as $index => $topic ) {
+            $payload = array( 'content_type' => 'post', 'language' => $campaign['language'], 'mode' => 'automatic', 'topic' => $topic['title'], 'primary_keyword' => $campaign['keyword'],
+                'secondary_keywords' => $topic['entities'], 'tone' => $config['tone'], 'word_count' => $config['word_count'], 'category' => $config['category'],
+                'approval_mode' => 'require_approval', 'campaign_id' => (int) $campaign['campaign_id'], 'topic_profile' => $topic );
+            $inserted = $wpdb->insert( $wpdb->prefix . 'acm_queue', array( 'batch_id' => $batch, 'content_type' => 'post', 'language' => $campaign['language'], 'status' => 'pending',
+                'payload' => wp_json_encode( $payload ), 'created_by' => (int) $campaign['owner_id'], 'created_at' => current_time( 'mysql', true ), 'updated_at' => current_time( 'mysql', true ),
+                'campaign_id' => (int) $campaign['campaign_id'], 'campaign_slot' => $index + 1, 'campaign_stage' => 'research', 'topic_signature' => $topic['signature'] ) );
+            if ( false === $inserted ) { return $this->storage_error(); }
+            $id = (int) $wpdb->insert_id; $ids[] = $id;
+            if ( false === $this->append_event( $id, null, 'pending', __( 'موضوع مستقل کمپین ثبت شد؛ انتشار فقط پس از بررسی انسان مجاز است.', 'ai-content-manager' ) ) ) { return $this->storage_error(); }
+        }
+        return $ids;
+    }
+    public function duplicate_corpus() {
+        global $wpdb;
+        $queue = $wpdb->get_results( "SELECT payload, generated_output FROM {$wpdb->prefix}acm_queue WHERE status <> 'trashed' ORDER BY item_id DESC LIMIT 501", ARRAY_A );
+        $posts = $wpdb->get_results( "SELECT post_title, post_excerpt, post_content FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status IN ('draft','publish','pending','future','private') ORDER BY ID DESC LIMIT 501", ARRAY_A );
+        if ( $wpdb->last_error || count( $queue ) + count( $posts ) > 500 ) { return new \WP_Error( 'acm_corpus_limit', __( 'حجم محتوای موجود از سقف بررسی محلی تکرار بیشتر است؛ برای حفظ ایمنی پذیرش موضوع نیازمند بررسی است.', 'ai-content-manager' ) ); }
+        $result = array();
+        foreach ( $queue as $row ) {
+            $payload = json_decode( $row['payload'], true ); $output = json_decode( $row['generated_output'] ?? '', true );
+            $result[] = array( 'profile' => $payload['topic_profile'] ?? null, 'keyword' => $payload['primary_keyword'] ?? '',
+                'text' => ( $payload['topic'] ?? '' ) . ' ' . ( $output['excerpt'] ?? '' ) . ' ' . wp_strip_all_tags( $output['content'] ?? '' ) );
+        }
+        foreach ( $posts as $row ) { $result[] = array( 'profile' => null, 'keyword' => '', 'text' => $row['post_title'] . ' ' . $row['post_excerpt'] . ' ' . wp_strip_all_tags( $row['post_content'] ) ); }
+        return $result;
+    }
+    /** This mutator runs inside the lease-checked result transaction, not a second transaction. */
+    public function campaign_output( $claim, $data ) {
+        global $wpdb;
+        if ( ! ExecutionContext::may_persist( $claim['item_id'] ) ) { return $this->permission_error(); }
+        $item = $this->get( $claim['item_id'] );
+        $output = ( new ArticleOutputValidator() )->validate( wp_json_encode( $data['output'] ?? null ) );
+        if ( is_wp_error( $output ) || ! $item || (int) $item['campaign_id'] !== (int) $claim['campaign_id'] ||
+            'generating' !== $item['status'] || $item['processing_token'] !== ( $data['processing_token'] ?? null ) || 'generate' !== $item['campaign_stage'] ) { return $this->storage_error(); }
+        $changed = $wpdb->update( $wpdb->prefix . 'acm_queue', array( 'status' => 'generated', 'processing_token' => null, 'generated_output' => wp_json_encode( $output ),
+            'api_metadata' => wp_json_encode( $data['metadata'] ), 'campaign_stage' => 'draft', 'updated_at' => current_time( 'mysql', true ) ),
+            array( 'item_id' => $claim['item_id'], 'processing_token' => $data['processing_token'], 'status' => 'generating' ) );
+        return 1 === $changed && false !== $this->append_event( $claim['item_id'], 'generating', 'generated', __( 'مقاله پژوهش‌شده کمپین ذخیره شد؛ انتشار انجام نشد.', 'ai-content-manager' ) ) ? true : $this->storage_error();
+    }
+    public function campaign_stage( $claim, $stage, $research = null ) {
+        global $wpdb;
+        if ( ! ExecutionContext::may_persist( $claim['item_id'] ) ) { return $this->permission_error(); }
+        $fields = array( 'campaign_stage' => $stage, 'updated_at' => current_time( 'mysql', true ) );
+        if ( null !== $research ) { $fields['research_output'] = wp_json_encode( $research ); }
+        return 1 === $wpdb->update( $wpdb->prefix . 'acm_queue', $fields, array( 'item_id' => $claim['item_id'], 'campaign_id' => $claim['campaign_id'], 'campaign_stage' => $claim['kind'] ) ) ? true : $this->storage_error();
     }
 }

@@ -36,15 +36,19 @@ final class Plugin {
         $this->initialized = true;
         load_plugin_textdomain( 'ai-content-manager', false, dirname( plugin_basename( ACM_PLUGIN_FILE ) ) . '/languages' );
         Infrastructure\Installer::maybe_upgrade();
+        $worker = new Services\BatchProcessor();
+        $worker->register();
+        $worker->schedule();
 
         if ( is_admin() ) {
             $settings = new Admin\Settings();
             $repository    = new Services\QueueRepository();
             $content_types = new Services\ContentTypeRegistry();
             $wpml          = new Integrations\Wpml();
+            $campaign_page = new Admin\CampaignsPage();
             $queue         = new Services\ContentQueue( $repository, $content_types );
             $content_page  = new Admin\ContentPage( $queue, $content_types, $wpml );
-            $queue_page    = new Admin\QueueManagerPage( $repository, $content_types, $wpml );
+            $queue_page    = new Admin\QueueManagerPage( $repository, $content_types, $wpml, $campaign_page );
             new Admin\QueueActions( new Services\DraftCreator( $repository, $wpml ), new Services\QueueTrash( $repository ), $queue_page );
             $generation = new Admin\QueueGeneration( new Services\ContentGeneratorService( $repository ) );
             $admin_page = new Admin\AdminPage( $settings, $content_page, $queue_page, $generation );

@@ -44,7 +44,7 @@ module.exports = (async function () {
         console.log('PASS: ' + tab + ' explicit click, nonce, mock response, and disconnection; no request on load');
     }
     const elements = {};
-    for (const id of ['acm-topic-input-mode', 'acm-topic', 'acm-topics', 'acm-single-topic-row', 'acm-multiple-topics-row', 'acm-topic-count', 'acm-primary-keyword-label', 'acm-secondary-keywords-label']) {
+    for (const id of ['acm-mode', 'acm-campaign-fields', 'acm-primary-keyword', 'acm-topic-input-mode', 'acm-topic', 'acm-topics', 'acm-single-topic-row', 'acm-multiple-topics-row', 'acm-topic-count', 'acm-primary-keyword-label', 'acm-secondary-keywords-label']) {
         elements[id] = {value: '', hidden: false, textContent: '', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }, setCustomValidity(message) { this.validityMessage = message; }};
     }
     elements['acm-topic-input-mode'].value = 'single';
@@ -71,6 +71,20 @@ module.exports = (async function () {
     assert.equal(elements['acm-topics'].validityMessage, 'too many');
     assert.equal(formNetworkCalls, 0);
     console.log('PASS: topic modes, independent count, normalized duplicate feedback, limit and zero API calls');
+    elements['acm-mode'].value = 'automatic'; elements['acm-mode'].listeners.change();
+    assert.equal(elements['acm-campaign-fields'].hidden, false);
+    assert.equal(elements['acm-single-topic-row'].hidden, true);
+    assert.equal(elements['acm-multiple-topics-row'].hidden, true);
+    assert.equal(elements['acm-topic'].required, false);
+    assert.equal(elements['acm-topics'].required, false);
+    assert.equal(elements['acm-primary-keyword'].required, true);
+    assert.equal(elements['acm-topics'].validityMessage, '');
+    assert.equal(formNetworkCalls, 0);
+    elements['acm-mode'].value = 'manual'; elements['acm-mode'].listeners.change();
+    assert.equal(elements['acm-primary-keyword'].required, false);
+    assert.equal(elements['acm-campaign-fields'].hidden, true);
+    assert.equal(elements['acm-topics'].validityMessage, 'too many');
+    console.log('PASS: automatic campaign requires keyword rather than topics, preserves manual input and sends zero requests');
     const categoryElements = {
         'acm-content-type': {value: 'post', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }},
         'acm-language': {value: 'fa', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }},
