@@ -43,7 +43,7 @@ final class Settings {
         $this->add_field( 'schedule_frequency', __( 'تناوب زمان‌بندی (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_workflow', 'render_schedule_frequency_field' );
         $this->add_field( 'seo_audit', __( 'بررسی سئو (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_features', 'render_seo_audit_field' );
         $this->add_field( 'featured_images', __( 'تصویر شاخص (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_features', 'render_featured_images_field' );
-        $this->add_field( 'web_research', __( 'پژوهش وب (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_features', 'render_web_research_field' );
+        $this->add_field( 'web_research', __( 'پژوهش وب درخواست دستی (گزینه رزروشده)', 'ai-content-manager' ), 'acm_features', 'render_web_research_field' );
         $this->add_field( 'integration_status', __( 'یکپارچه‌سازی‌های شناسایی‌شده', 'ai-content-manager' ), 'acm_integrations', 'render_integrations_field' );
         $this->add_field( 'yoast_on_draft', __( 'تکمیل اطلاعات Yoast هنگام ایجاد پیش‌نویس', 'ai-content-manager' ), 'acm_integrations', 'render_yoast_field' );
         $this->add_field( 'openai_api_key', __( 'کلید API', 'ai-content-manager' ), 'acm_openai', 'render_openai_api_key_field' );
@@ -350,7 +350,7 @@ final class Settings {
     public function render_web_research_field() {
         $values = $this->values();
         ?>
-        <label><input type="checkbox" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[web_research]" value="1" <?php checked( $values['web_research'] ); ?>> <?php esc_html_e( 'پژوهش وب اختیاری؛ هنوز اجرا نمی‌شود.', 'ai-content-manager' ); ?></label>
+        <label><input type="checkbox" name="<?php echo esc_attr( self::OPTION_NAME ); ?>[web_research]" value="1" <?php checked( $values['web_research'] ); ?>> <?php esc_html_e( 'پژوهش وب درخواست دستی هنوز اجرا نمی‌شود؛ پژوهش در کمپین خودکار الزامی و مستقل از این گزینه است.', 'ai-content-manager' ); ?></label>
         <?php
     }
 

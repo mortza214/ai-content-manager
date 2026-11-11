@@ -207,7 +207,7 @@ final class ContentPage {
                         </tr>
                     </tbody>
                 </table>
-                <?php submit_button( __( 'افزودن به صف', 'ai-content-manager' ) ); ?>
+                <?php submit_button( __( 'ثبت درخواست یا ایجاد کمپین غیرفعال', 'ai-content-manager' ) ); ?>
             </form>
         </div>
         <?php

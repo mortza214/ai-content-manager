@@ -19,6 +19,7 @@
             topics.required = !automatic && multiple;
             const campaign = document.getElementById('acm-campaign-fields');
             if (campaign) campaign.hidden = !automatic;
+            if (campaign && campaign.querySelectorAll) campaign.querySelectorAll('input').forEach(input => { input.disabled = !automatic; });
             const keyword = document.getElementById('acm-primary-keyword');
             if (keyword) keyword.required = !!automatic;
             mode.disabled = !!automatic;
