@@ -8,7 +8,7 @@ function sanitize_title( $value ) { return trim( $value ); }
 function wp_strip_all_tags( $value ) { return strip_tags( $value ); }
 function current_time( $format, $gmt = false ) { return gmdate( 'Y-m-d H:i:s' ); }
 function wp_remote_retrieve_response_code( $response ) { return $response['status']; }
-function wp_remote_retrieve_header( $response, $header ) { return 'fixture-request'; }
+function wp_remote_retrieve_header( $response, $header ) { return $response['headers'][ $header ] ?? 'fixture-request'; }
 function wp_remote_retrieve_body( $response ) { return $response['body']; }
 class FixtureRole { public $caps = array(); public function add_cap( $cap ) { $this->caps[$cap] = true; } }
 $fixture_roles = array( 'administrator' => new FixtureRole(), 'editor' => new FixtureRole() );
@@ -59,6 +59,8 @@ class FixtureDatabase {
         return array_values( array_filter( $this->queue, function ( $row ) use ( $match ) { return 'generating' === $row['status'] && $row['updated_at'] < $match[1]; } ) );
     }
     public function get_var( $sql ) {
+        if ( false !== strpos( $sql, 'acm_campaign_steps' ) ) { return 0; }
+        if ( preg_match( "/SELECT COUNT\(\*\) FROM wp_acm_queue WHERE status = 'generating'$/", $sql ) ) { return count( array_filter( $this->queue, static function ( $row ) { return 'generating' === $row['status']; } ) ); }
         if ( false !== strpos( $sql, 'GET_LOCK' ) ) { return $this->lock_available ? '1' : '0'; }
         if ( false !== strpos( $sql, 'RELEASE_LOCK' ) ) { return '1'; }
         if ( false !== strpos( $sql, 'COUNT(*)' ) && false !== strpos( $sql, 'updated_at <' ) ) { return count( $this->stale( $sql ) ); }
@@ -74,6 +76,7 @@ class FixtureDatabase {
         return $this->queue[(int) $match[1]] ?? null;
     }
     public function get_results( $sql, $format ) {
+        if ( false !== strpos( $sql, 'acm_campaign_steps' ) ) { return array(); }
         if ( false !== strpos( $sql, 'updated_at <' ) ) { return array_slice( $this->stale( $sql ), 0, 100 ); }
         if ( false !== strpos( $sql, 'AS record_id' ) ) {
             $is_event = false !== strpos( $sql, 'wp_acm_queue_events' );

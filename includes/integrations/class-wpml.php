@@ -108,6 +108,14 @@ final class Wpml {
             apply_filters( 'wpml_element_language_code', null, array( 'element_id' => $post_id, 'element_type' => $post_type ) ) );
     }
 
+    /** Read actual relationships without a language-filtered projection (Cron has no admin 'all' scope). */
+    public function object_term_ids( $post_id, $taxonomy ) {
+        if ( ! $this->is_available() ) { return wp_get_object_terms( $post_id, $taxonomy, array( 'fields' => 'ids' ) ); }
+        global $wpdb;
+        $ids = $wpdb->get_col( $wpdb->prepare( "SELECT tt.term_id FROM {$wpdb->term_relationships} tr INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id WHERE tr.object_id = %d AND tt.taxonomy = %s ORDER BY tt.term_id", $post_id, $taxonomy ) );
+        return $wpdb->last_error ? new \WP_Error( 'acm_terms_read', __( 'خواندن رابطه واقعی دسته‌بندی ممکن نشد.', 'ai-content-manager' ) ) : $ids;
+    }
+
     /** Assign only the original article language, then read it back; never translate. */
     public function assign_language( $post_id, $post_type, $language ) {
         if ( ! $this->is_available() ) { return true; }

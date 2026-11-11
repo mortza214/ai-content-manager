@@ -16,11 +16,15 @@ function wp_strip_all_tags( $value ) { return strip_tags( $value ); }
 function wp_kses( $value, $allowed ) { return strip_tags( $value, '<p><h2><h3><a>' ); }
 require __DIR__ . '/../includes/services/class-article-output-validator.php';
 require __DIR__ . '/../includes/services/class-content-generator-service.php';
+require __DIR__ . '/../includes/services/class-campaign-repository.php';
 function verify( $condition, $label ) {
     if ( ! $condition ) { throw new RuntimeException( $label ); }
     echo "PASS: $label\n";
 }
 class MemoryQueue {
+    public function lock_worker() { return true; }
+    public function generation_busy() { return false; }
+    public function unlock_worker() {}
     public $status = 'pending';
     public $events = array();
     public $output;

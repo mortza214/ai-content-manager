@@ -7,6 +7,7 @@ $archivePath = Join-Path $projectRoot 'ai-content-manager.zip'
 $temporaryPath = Join-Path $projectRoot ('acm-package-' + [guid]::NewGuid().ToString('N') + '.tmp')
 $files = @((Get-Item -LiteralPath (Join-Path $projectRoot 'ai-content-manager.php')))
 $files += @((Get-Item -LiteralPath (Join-Path $projectRoot 'README.md')))
+$files += @((Get-Item -LiteralPath (Join-Path $projectRoot 'DESIGN-CAMPAIGNS.md')))
 $files += @(Get-ChildItem -LiteralPath $projectRoot -Filter 'RELEASE-*.md' -File)
 foreach ($folder in @('includes', 'assets', 'tests')) {
     $files += @(Get-ChildItem -LiteralPath (Join-Path $projectRoot $folder) -File -Recurse)

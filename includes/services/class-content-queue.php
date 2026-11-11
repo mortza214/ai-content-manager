@@ -77,7 +77,9 @@ final class ContentQueue {
             );
         }
 
-        $item_ids = $submission_id ? $this->repository->insert_submission( $batch_id, $items ) : $this->repository->insert_batch( $batch_id, $items, absint( $user_id ) );
+        if ( ! $this->repository->lock_topics() ) { return new \WP_Error( 'acm_topics_busy', __( 'پذیرش موضوع در حال بررسی است؛ دوباره تلاش کنید.', 'ai-content-manager' ) ); }
+        try { $item_ids = $submission_id ? $this->repository->insert_submission( $batch_id, $items ) : $this->repository->insert_batch( $batch_id, $items, absint( $user_id ) ); }
+        finally { $this->repository->unlock_topics(); }
         if ( is_wp_error( $item_ids ) ) {
             return $item_ids;
         }

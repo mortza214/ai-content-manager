@@ -28,11 +28,14 @@ function esc_attr__( $value, $domain = '' ) { return esc_attr( $value ); }
 function esc_html_e( $value, $domain = '' ) { echo esc_html( $value ); }
 function current_user_can( $cap, ...$args ) {
     $GLOBALS['cap_checks'][] = array( $cap, $args );
+    if ( isset( $GLOBALS['fixture_user_caps'] ) ) { return ! empty( $GLOBALS['fixture_user_caps'][get_current_user_id()][$cap] ); }
     if ( 'edit_post' === $cap && isset( $GLOBALS['post_capabilities'] ) ) { return ! empty( $GLOBALS['post_capabilities'][$args[0] ?? 0] ); }
     return ! empty( $GLOBALS['caps'][$cap] );
 }
 function wp_get_current_user() { return (object) array( 'roles' => $GLOBALS['roles'] ); }
-function get_current_user_id() { return 7; }
+function get_current_user_id() { return $GLOBALS['fixture_current_user'] ?? 7; }
+function wp_set_current_user( $id ) { $GLOBALS['fixture_current_user'] = $id; return get_userdata( $id ); }
+function esc_textarea( $value ) { return esc_html( $value ); }
 function get_option( $name, $default = false ) { return $GLOBALS['options'][$name] ?? $default; }
 function update_option( $name, $value, $autoload = null ) { $GLOBALS['options'][$name] = $value; return true; }
 function wp_salt( $context ) { return 'isolated-test-salt'; }
@@ -52,7 +55,7 @@ function add_filter( $name, $callback, $priority = 10, $accepted = 1 ) { $GLOBAL
 function remove_filter( $name, $callback, $priority = 10 ) { foreach ( $GLOBALS['fixture_filters'][$name][$priority] ?? array() as $index => $registered ) { if ( $registered === $callback ) { unset( $GLOBALS['fixture_filters'][$name][$priority][$index] ); } } }
 function do_action( $name, ...$args ) { if ( isset( $GLOBALS['action_handlers'][$name] ) ) { call_user_func( $GLOBALS['action_handlers'][$name], ...$args ); } }
 function get_locale() { return 'fa_IR'; }
-function wp_timezone() { return new DateTimeZone( 'Asia/Tehran' ); }
+function wp_timezone() { return new DateTimeZone( $GLOBALS['fixture_timezone'] ?? 'Asia/Tehran' ); }
 function get_userdata( $id ) { return isset( $GLOBALS['fixture_users'] ) ? ( $GLOBALS['fixture_users'][$id] ?? false ) : (object) array( 'ID' => $id, 'display_name' => 'Test creator' ); }
 function get_object_taxonomies( $type, $format ) { return $GLOBALS['fixture_taxonomies'][$type] ?? array(); }
 function selected( $a, $b ) { if ( $a == $b ) { echo ' selected'; } }
@@ -92,7 +95,7 @@ function wp_remote_get( ...$args ) { if ( isset( $GLOBALS['fixture_http'] ) ) { 
 function wp_remote_post( ...$args ) { if ( isset( $GLOBALS['fixture_http'] ) ) { return call_user_func( $GLOBALS['fixture_http'], ...$args ); } $GLOBALS['network_calls']++; throw new RuntimeException( 'network forbidden' ); }
 function wp_send_json_success( $data ) { throw new JsonResult( $data ); }
 function wp_send_json_error( $data, $status = null ) { throw new JsonResult( $data ); }
-function wp_kses( $text, $allowed ) { return strip_tags( $text, '<p><h2><h3>' ); }
+function wp_kses( $text, $allowed ) { return strip_tags( $text, ! empty( $GLOBALS['fixture_allow_reference_tags'] ) ? '<' . implode( '><', array_keys( $allowed ) ) . '>' : '<p><h2><h3>' ); }
 function wp_kses_post( $text ) { return $text; }
 function get_date_from_gmt( $time, $format ) { return $time; }
 function paginate_links( $args ) { return '<a href="' . esc_attr( str_replace( '%#%', '2', $args['base'] ) ) . '">2</a>'; }

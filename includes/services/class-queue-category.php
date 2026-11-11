@@ -72,9 +72,7 @@ final class QueueCategory {
     }
 
     public function current( $post_id, $taxonomy ) {
-        $ids = $this->wpml->in_language( 'all', static function () use ( $post_id, $taxonomy ) {
-            return wp_get_object_terms( $post_id, $taxonomy, array( 'fields' => 'ids' ) );
-        } );
+        $ids = $this->wpml->object_term_ids( $post_id, $taxonomy );
         if ( is_wp_error( $ids ) || ! is_array( $ids ) ) { return $this->error( __( 'خواندن دسته‌بندی واقعی پیش‌نویس انجام نشد.', 'ai-content-manager' ) ); }
         $ids = array_values( array_unique( array_map( 'intval', $ids ) ) ); sort( $ids, SORT_NUMERIC );
         return $ids;

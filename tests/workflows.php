@@ -7,7 +7,7 @@ $fixture_posts = array(); $fixture_users = array( 7 => (object) array( 'ID' => 7
 $caps += array( 'edit_pages' => true, 'edit_others_posts' => true, 'edit_others_pages' => true, 'edit_post' => true, 'assign_terms' => true );
 $insert_calls = 0; $assigned_languages = array();
 function get_post_type_object( $type ) { return in_array( $type, array( 'post', 'page' ), true ) ? (object) array( 'cap' => (object) array( 'create_posts' => 'page' === $type ? 'edit_pages' : 'edit_posts', 'edit_others_posts' => 'page' === $type ? 'edit_others_pages' : 'edit_others_posts' ) ) : null; }
-function user_can( $user, $cap ) { return isset( $user->ID ) && empty( $GLOBALS['denied_creators'][$user->ID] ); }
+function user_can( $user, $cap ) { return isset( $user->ID ) && empty( $GLOBALS['denied_creators'][$user->ID] ) && ( ! isset( $GLOBALS['fixture_user_caps'] ) || ! empty( $GLOBALS['fixture_user_caps'][$user->ID][$cap] ) ); }
 function wp_slash( $value ) { return is_array( $value ) ? array_map( 'wp_slash', $value ) : ( is_string( $value ) ? addslashes( $value ) : $value ); }
 function get_post( $id ) { return $GLOBALS['fixture_posts'][$id] ?? null; }
 function get_edit_post_link( $id, $context = '' ) { return '/wp-admin/post.php?post=' . $id . '&action=edit'; }
@@ -47,6 +47,8 @@ function wp_insert_post( $args, $wp_error ) {
 }
 
 class WorkflowDatabase extends FixtureDatabase {
+    public $term_relationships = 'wp_term_relationships';
+    public $term_taxonomy = 'wp_term_taxonomy';
     public $posts = 'wp_posts';
     public $fail_link_once = false;
     public $fail_queue_after = null;
@@ -85,17 +87,28 @@ class WorkflowDatabase extends FixtureDatabase {
             $key = $match[1];
             if ( $this->missing_index && 'draft_token' === $key ) { return array(); }
             $indexes = array( 'PRIMARY' => array( false !== strpos( $sql, 'queue_events' ) ? 'event_id' : 'item_id' ), 'draft_token' => array( 'draft_token' ), 'status_created' => array( 'status', 'created_at' ), 'status_updated' => array( 'status', 'updated_at' ), 'language_type' => array( 'language', 'content_type' ), 'batch_id' => array( 'batch_id' ), 'scheduled_at' => array( 'scheduled_at' ), 'item_created' => array( 'item_id', 'created_at' ), 'created_at' => array( 'created_at' ) );
-            $rows = array(); foreach ( $indexes[$key] as $index => $column ) { $rows[] = array( 'Seq_in_index' => $index + 1, 'Column_name' => $column, 'Non_unique' => in_array( $key, array( 'PRIMARY', 'draft_token' ), true ) ? 0 : 1 ); } return $rows;
+            $indexes += array( 'campaign_slot' => array( 'campaign_id', 'campaign_slot' ), 'topic_signature' => array( 'topic_signature' ), 'submission_id' => array( 'submission_id' ), 'due' => array( 'status', 'next_run_at' ), 'attempt_id' => array( 'attempt_id' ), 'campaign_state' => array( 'campaign_id', 'state' ), 'lease' => array( 'state', 'lease_until' ) );
+            if ( false !== strpos( $sql, 'acm_campaign_steps' ) ) { $indexes['PRIMARY'] = array( 'step_id' ); }
+            elseif ( false !== strpos( $sql, 'acm_campaigns' ) ) { $indexes['PRIMARY'] = array( 'campaign_id' ); }
+            $rows = array(); foreach ( $indexes[$key] as $index => $column ) { $rows[] = array( 'Seq_in_index' => $index + 1, 'Column_name' => $column, 'Non_unique' => in_array( $key, array( 'PRIMARY', 'draft_token', 'campaign_slot', 'topic_signature', 'submission_id', 'attempt_id' ), true ) ? 0 : 1 ); } return $rows;
         }
         return parent::get_results( $sql, $format );
     }
     public function get_col( $sql ) {
+        if ( false !== strpos( $sql, 'SELECT tt.term_id' ) ) {
+            preg_match( '/tr.object_id = (\d+)/', $sql, $match );
+            if ( ! empty( $GLOBALS['term_read_error'] ) ) { $this->last_error = 'fixture read failure'; return null; }
+            $this->last_error = ''; return $GLOBALS['assigned_terms'][(int) $match[1]] ?? array();
+        }
         if ( false !== strpos( $sql, 'post_content_filtered =' ) ) {
             preg_match( "/post_content_filtered = '([^']+)'/", $sql, $match );
             return array_keys( array_filter( $GLOBALS['fixture_posts'], static function ( $post ) use ( $match ) { return $post->post_content_filtered === $match[1]; } ) );
         }
         if ( false !== strpos( $sql, 'SHOW COLUMNS' ) ) {
             $columns = false !== strpos( $sql, 'queue_events' ) ? array( 'event_id', 'item_id', 'status_from', 'status_to', 'message', 'api_metadata', 'created_by', 'created_at' ) : array( 'item_id', 'batch_id', 'content_type', 'language', 'status', 'payload', 'generated_output', 'api_metadata', 'processing_token', 'draft_token', 'draft_state', 'trashed_at', 'trashed_by', 'previous_status', 'created_by', 'created_at', 'updated_at', 'scheduled_at', 'post_id' );
+            if ( false !== strpos( $sql, 'acm_campaign_steps' ) ) { $columns = array( 'step_id', 'campaign_id', 'item_id', 'kind', 'source_index', 'attempt_id', 'state', 'lease_until', 'output', 'api_metadata', 'error_message', 'created_at', 'updated_at' ); }
+            elseif ( false !== strpos( $sql, 'acm_campaigns' ) ) { $columns = array( 'campaign_id', 'submission_id', 'owner_id', 'keyword', 'language', 'config', 'status', 'phase', 'target_count', 'accepted_count', 'completed_count', 'next_run_at', 'last_started_day', 'last_error', 'created_at', 'updated_at' ); }
+            elseif ( false === strpos( $sql, 'queue_events' ) ) { $columns = array_merge( $columns, array( 'campaign_id', 'campaign_slot', 'campaign_stage', 'campaign_started_at', 'research_output', 'topic_signature' ) ); }
             return $this->missing_column ? array_diff( $columns, array( 'draft_state' ) ) : $columns;
         }
         throw new RuntimeException( 'Unexpected get_col: ' . $sql );

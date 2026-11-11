@@ -7,14 +7,22 @@
     const contentType = document.getElementById('acm-content-type');
     const category = document.getElementById('acm-category');
     const language = document.getElementById('acm-language');
+    const execution = document.getElementById('acm-mode');
 
     if (mode && topic && topics && typeof acmContentForm !== 'undefined') {
         const syncTopics = function () {
-            const multiple = mode.value === 'multiple';
-            document.getElementById('acm-single-topic-row').hidden = multiple;
-            document.getElementById('acm-multiple-topics-row').hidden = !multiple;
-            topic.required = !multiple;
-            topics.required = multiple;
+            const automatic = execution && execution.value === 'automatic';
+            const multiple = !automatic && mode.value === 'multiple';
+            document.getElementById('acm-single-topic-row').hidden = automatic || multiple;
+            document.getElementById('acm-multiple-topics-row').hidden = automatic || !multiple;
+            topic.required = !automatic && !multiple;
+            topics.required = !automatic && multiple;
+            const campaign = document.getElementById('acm-campaign-fields');
+            if (campaign) campaign.hidden = !automatic;
+            if (campaign && campaign.querySelectorAll) campaign.querySelectorAll('input').forEach(input => { input.disabled = !automatic; });
+            const keyword = document.getElementById('acm-primary-keyword');
+            if (keyword) keyword.required = !!automatic;
+            mode.disabled = !!automatic;
             const lines = multiple ? topics.value.split(/\r\n|[\n\r\u2028\u2029]/).map(line => line.trim()).filter(Boolean) : (topic.value.trim() ? [topic.value] : []);
             const normalized = lines.map(line => line.replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\s+/gu, ' ').toLowerCase());
             const duplicate = new Set(normalized).size !== normalized.length;
@@ -25,6 +33,7 @@
             document.getElementById('acm-secondary-keywords-label').textContent = multiple ? acmContentForm.strings.sharedSecondary : acmContentForm.strings.singleSecondary;
         };
         mode.addEventListener('change', syncTopics);
+        if (execution) execution.addEventListener('change', syncTopics);
         topic.addEventListener('input', syncTopics);
         topics.addEventListener('input', syncTopics);
         syncTopics();

@@ -67,7 +67,7 @@ final class ContentPage {
         <div class="wrap">
             <h2><?php esc_html_e( 'تولید محتوا', 'ai-content-manager' ); ?></h2>
             <?php $this->render_notice(); ?>
-            <p><?php esc_html_e( 'در این بخش فقط درخواست محتوا ثبت می‌شود. تولید دستی و ایجاد پیش‌نویس وردپرس دو عملیات جداگانه در تب مدیریت صف هستند. هیچ مقاله یا موضوعی هنگام ثبت فرم با هوش مصنوعی تولید و هیچ نوشته‌ای خودکار منتشر نمی‌شود.', 'ai-content-manager' ); ?></p>
+            <p><?php esc_html_e( 'حالت دستی درخواست موضوع را ثبت می‌کند. حالت خودکار، کمپین کلمه کلیدی غیرفعال می‌سازد؛ شروع هزینه‌دار فقط پس از مشاهده برآورد و تأیید جداگانه در مدیریت صف است. کمپین موضوع‌های مستقل و پژوهش وب را به پیش‌نویس نیازمند بازبینی انسانی تبدیل می‌کند؛ انتشار، ترجمه و تصویر خودکار انجام نمی‌شوند.', 'ai-content-manager' ); ?></p>
             <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
                 <input type="hidden" name="action" value="acm_enqueue_content">
                 <?php wp_nonce_field( 'acm_enqueue_content' ); ?>
@@ -95,6 +95,12 @@ final class ContentPage {
                             <th scope="row"><label for="acm-topic-input-mode"><?php esc_html_e( 'روش ثبت موضوع', 'ai-content-manager' ); ?></label></th>
                             <td><select id="acm-topic-input-mode" name="topic_input_mode"><option value="single" <?php selected( $this->value( 'topic_input_mode', 'single' ), 'single' ); ?>><?php esc_html_e( 'یک موضوع', 'ai-content-manager' ); ?></option><option value="multiple" <?php selected( $this->value( 'topic_input_mode' ), 'multiple' ); ?>><?php esc_html_e( 'چند موضوع مستقل', 'ai-content-manager' ); ?></option></select><p class="description"><?php esc_html_e( 'زبان، لحن، تعداد تقریبی کلمات و کلمات کلیدی در یک ارسال برای همه موضوع‌ها مشترک‌اند. هر موضوع دقیقاً یک آیتم صف می‌سازد؛ پیشنهاد موضوع با هوش مصنوعی انجام نمی‌شود.', 'ai-content-manager' ); ?></p></td>
                         </tr>
+                        <tr id="acm-campaign-fields" hidden><th scope="row">کمپین کلمه کلیدی</th><td>
+                            <p><label>تعداد مقاله هدف <input type="number" name="campaign_target" min="1" max="10" value="<?php echo esc_attr( $this->value( 'campaign_target', '3' ) ); ?>"></label></p>
+                            <p><label>سقف هزینه دلار <input type="number" name="campaign_budget" min="0.01" max="1000" step="0.01" value="<?php echo esc_attr( $this->value( 'campaign_budget', '1.00' ) ); ?>"></label></p>
+                            <p><label>سقف فراخوانی OpenAI هر مقاله <input type="number" name="campaign_max_calls" min="2" max="5" value="<?php echo esc_attr( $this->value( 'campaign_max_calls', '3' ) ); ?>"></label></p>
+                            <p>پیش‌فرض: سه مقاله مستقل، روزی یک مقاله با منطقه زمانی سایت. موضوع را خالی بگذارید؛ کلمه کلیدی، زبان، دسته‌بندی، لحن و طول مقاله را انتخاب کنید. موضوع کم‌تنوع یا پژوهش نامعتبر سهمیه را پر نمی‌کند. سقف فراخوانی شامل پژوهش، تولید و تلاش مجدد هر مقاله است؛ موضوع‌یابی سقف جداگانه دو درخواست دارد. هزینه پیش از شروع نمایش داده می‌شود.</p>
+                        </td></tr>
                         <tr id="acm-single-topic-row">
                             <th scope="row"><label for="acm-topic"><?php esc_html_e( 'موضوع', 'ai-content-manager' ); ?></label></th>
                             <td><input id="acm-topic" name="topic" type="text" class="regular-text" maxlength="250" value="<?php echo esc_attr( $this->value( 'topic' ) ); ?>"><p class="description"><?php esc_html_e( 'در حالت یک موضوع دقیقاً یک درخواست ثبت می‌شود.', 'ai-content-manager' ); ?></p></td>
@@ -166,7 +172,7 @@ final class ContentPage {
                         <tr>
                             <th scope="row"><?php esc_html_e( 'گزینه‌های محتوا', 'ai-content-manager' ); ?></th>
                             <td>
-                                <label><input type="checkbox" name="web_research" value="1" <?php checked( '1' === $this->value( 'web_research' ) ); ?>> <?php esc_html_e( 'پژوهش وب (هنوز اجرا نمی‌شود)', 'ai-content-manager' ); ?></label><br>
+                                <label><input type="checkbox" name="web_research" value="1" <?php checked( '1' === $this->value( 'web_research' ) ); ?>> <?php esc_html_e( 'پژوهش وب برای درخواست دستی هنوز اجرا نمی‌شود؛ در کمپین خودکار پژوهش الزامی است.', 'ai-content-manager' ); ?></label><br>
                                 <label><input type="checkbox" name="featured_image" value="1" <?php checked( '1' === $this->value( 'featured_image' ) ); ?>> <?php esc_html_e( 'درخواست تصویر شاخص (هنوز اجرا نمی‌شود)', 'ai-content-manager' ); ?></label>
                             </td>
                         </tr>
@@ -201,7 +207,7 @@ final class ContentPage {
                         </tr>
                     </tbody>
                 </table>
-                <?php submit_button( __( 'افزودن به صف', 'ai-content-manager' ) ); ?>
+                <?php submit_button( __( 'ثبت درخواست یا ایجاد کمپین غیرفعال', 'ai-content-manager' ) ); ?>
             </form>
         </div>
         <?php
@@ -230,6 +236,13 @@ final class ContentPage {
             wp_die( esc_html__( 'اجازه انجام این کار را ندارید.', 'ai-content-manager' ), 403 );
         }
         check_admin_referer( 'acm_enqueue_content' );
+        if ( 'automatic' === ( $_POST['mode'] ?? '' ) ) {
+            $result = ( new \AIContentManager\Services\CampaignService() )->create( wp_unslash( $_POST ) );
+            if ( is_wp_error( $result ) ) { $this->validation_error( $result->get_error_message() ); }
+            delete_transient( 'acm_content_feedback_' . get_current_user_id() );
+            set_transient( 'acm_campaign_notice_' . get_current_user_id(), array( 'message' => __( 'کمپین غیرفعال ساخته شد؛ برآورد هزینه را در مدیریت صف بررسی کنید و شروع را جداگانه تأیید کنید. هیچ درخواستی ارسال نشده است.', 'ai-content-manager' ) ), 600 );
+            wp_safe_redirect( AdminPage::url( 'queue' ) ); exit;
+        }
 
         $types        = $this->content_types->all();
         $content_type = isset( $_POST['content_type'] ) && is_string( $_POST['content_type'] ) ? sanitize_key( wp_unslash( $_POST['content_type'] ) ) : '';
@@ -362,7 +375,7 @@ final class ContentPage {
     private function list_value( $name ) { return isset( $this->form[ $name ] ) && is_array( $this->form[ $name ] ) ? $this->form[ $name ] : array(); }
 
     private function validation_error( $message ) {
-        $allowed = array( 'topic', 'topics', 'topic_input_mode', 'submission_id', 'content_type', 'mode', 'primary_keyword', 'secondary_keywords', 'keyword_mode', 'language', 'target_languages', 'word_count', 'category_choice', 'tone', 'web_research', 'featured_image', 'approval_mode', 'schedule_days', 'schedule_time', 'interval_count', 'interval_unit' );
+        $allowed = array( 'campaign_target', 'campaign_budget', 'campaign_max_calls', 'topic', 'topics', 'topic_input_mode', 'submission_id', 'content_type', 'mode', 'primary_keyword', 'secondary_keywords', 'keyword_mode', 'language', 'target_languages', 'word_count', 'category_choice', 'tone', 'web_research', 'featured_image', 'approval_mode', 'schedule_days', 'schedule_time', 'interval_count', 'interval_unit' );
         $values = array();
         foreach ( $allowed as $key ) {
             if ( isset( $_POST[ $key ] ) && is_string( $_POST[ $key ] ) ) { $values[ $key ] = substr( wp_unslash( $_POST[ $key ] ), 0, 100000 ); }
