@@ -37,6 +37,18 @@ final class ArticleOutputValidator {
         return $data;
     }
 
+    /** Preserve strict generation validation, but keep invalid SEO independent of draft content. */
+    public function validate_for_draft( $raw ) {
+        $data = is_string( $raw ) ? json_decode( $raw, true ) : null;
+        if ( ! is_array( $data ) ) { return $this->validate( $raw ); }
+        $article = $data;
+        foreach ( array( 'primary_keyword', 'suggested_meta_description' ) as $field ) {
+            if ( array_key_exists( $field, $article ) ) { $article[ $field ] = 'seo-validation'; }
+        }
+        $valid = $this->validate( wp_json_encode( $article ) );
+        return is_wp_error( $valid ) ? $valid : $data;
+    }
+
     public static function allowed_html() {
         return array( 'p' => array(), 'h2' => array(), 'h3' => array(), 'h4' => array(), 'ul' => array(), 'ol' => array(),
             'li' => array(), 'strong' => array(), 'em' => array(), 'b' => array(), 'i' => array(), 'br' => array(),

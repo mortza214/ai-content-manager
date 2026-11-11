@@ -82,6 +82,8 @@ class WorkflowDatabase extends FixtureDatabase {
     }
 }
 
+if ( defined( 'ACM_SEO_BOOTSTRAP_ONLY' ) ) { return; }
+
 $wpdb = new WorkflowDatabase();
 $repo = new AIContentManager\Services\QueueRepository();
 $queue = new AIContentManager\Services\ContentQueue( $repo, new AIContentManager\Services\ContentTypeRegistry() );

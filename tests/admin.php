@@ -2,7 +2,7 @@
 /** Isolated WordPress contract tests. Network calls are forbidden here. */
 define( 'ABSPATH', __DIR__ );
 define( 'ACM_PLUGIN_URL', 'https://example.test/plugin/' );
-define( 'ACM_VERSION', '0.5.0' );
+define( 'ACM_VERSION', '0.6.1' );
 set_error_handler( function ( $level, $message, $file, $line ) { throw new ErrorException( $message, 0, $level, $file, $line ); } );
 $caps = array( 'edit_posts' => true, 'manage_options' => true, 'manage_ai_content' => true );
 $roles = array( 'administrator' );
@@ -26,7 +26,11 @@ function esc_url( $value ) { return esc_html( $value ); }
 function esc_html__( $value, $domain = '' ) { return esc_html( $value ); }
 function esc_attr__( $value, $domain = '' ) { return esc_attr( $value ); }
 function esc_html_e( $value, $domain = '' ) { echo esc_html( $value ); }
-function current_user_can( $cap ) { return ! empty( $GLOBALS['caps'][$cap] ); }
+function current_user_can( $cap, ...$args ) {
+    $GLOBALS['cap_checks'][] = array( $cap, $args );
+    if ( 'edit_post' === $cap && isset( $GLOBALS['post_capabilities'] ) ) { return ! empty( $GLOBALS['post_capabilities'][$args[0] ?? 0] ); }
+    return ! empty( $GLOBALS['caps'][$cap] );
+}
 function wp_get_current_user() { return (object) array( 'roles' => $GLOBALS['roles'] ); }
 function get_current_user_id() { return 7; }
 function get_option( $name, $default = false ) { return $GLOBALS['options'][$name] ?? $default; }
@@ -63,15 +67,18 @@ function add_query_arg( $args, $url ) { return $url . '?' . str_replace( '%25%23
 function wp_create_nonce( $action ) { return 'nonce-' . $action; }
 function wp_verify_nonce( $nonce, $action ) { return $nonce === wp_create_nonce( $action ); }
 function get_transient( $key ) { return $GLOBALS['transients'][$key] ?? false; }
-function set_transient( $key, $value, $ttl ) { $GLOBALS['transients'][$key] = $value; return true; }
+function set_transient( $key, $value, $ttl ) {
+    if ( ( $GLOBALS['transient_fail_key'] ?? null ) === $key || ( $GLOBALS['transients'][$key] ?? null ) === $value ) { return false; }
+    $GLOBALS['transients'][$key] = $value; return true;
+}
 function delete_transient( $key ) { unset( $GLOBALS['transients'][$key] ); return true; }
 function wp_generate_uuid4() { static $n = 0; return sprintf( '00000000-0000-4000-8000-%012d', ++$n ); }
-function wp_nonce_url( $url, $action ) { return $url . '&_wpnonce=' . wp_create_nonce( $action ); }
+function wp_nonce_url( $url, $action ) { return esc_html( str_replace( '&amp;', '&', $url ) . '&_wpnonce=' . wp_create_nonce( $action ) ); }
 function check_admin_referer( $action ) { if ( ( $_REQUEST['_wpnonce'] ?? $_GET['_wpnonce'] ?? $_POST['_wpnonce'] ?? '' ) !== wp_create_nonce( $action ) ) { throw new AccessDenied( 'nonce' ); } }
 function check_ajax_referer( $action, $key ) { if ( ( $_POST[$key] ?? '' ) !== wp_create_nonce( $action ) ) { throw new AccessDenied( 'nonce' ); } }
 function wp_nonce_field( $action ) { echo '<input name="_wpnonce" value="' . wp_create_nonce( $action ) . '">'; }
-function wp_die( ...$args ) { throw new AccessDenied( '403' ); }
-function wp_safe_redirect( $url ) { throw new RedirectResult( $url ); }
+function wp_die( ...$args ) { $GLOBALS['last_die'] = $args; throw new AccessDenied( $args[0] ?? '' ); }
+function wp_safe_redirect( $url, $status = 302 ) { $GLOBALS['redirect_status'] = $status; if ( ! empty( $GLOBALS['redirect_fail'] ) ) { return false; } throw new RedirectResult( $url ); }
 function register_setting( ...$args ) { $GLOBALS['registered_setting'] = $args; }
 function add_settings_section( $id, $label, $callback, $page ) { $GLOBALS['sections'][$id] = $label; }
 function add_settings_field( $id, $label, $callback, ...$args ) { $GLOBALS['fields'][$id] = array( $label, $callback ); }

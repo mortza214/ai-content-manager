@@ -27,6 +27,7 @@ final class QueueManagerPage {
     private $wpml;
     private $recovery;
     private $usage;
+    private $seo_page;
 
     /** @param QueueRepository $repository Queue persistence layer. */
     public function __construct( $repository, $content_types, $wpml ) {
@@ -35,6 +36,7 @@ final class QueueManagerPage {
         $this->wpml          = $wpml;
         $this->recovery = new \AIContentManager\Services\QueueRecovery( $repository );
         $this->usage = new UsageDashboard( $repository );
+        $this->seo_page = new QueueSeoPage( $repository, $this );
         add_action( 'admin_post_acm_recover_queue', array( $this, 'handle_recovery' ) );
     }
 
@@ -52,6 +54,7 @@ final class QueueManagerPage {
         $types   = $this->content_types->all();
         $languages = $this->wpml->active_languages();
         $this->render_preview();
+        $this->seo_page->render();
         ?>
         <div class="wrap">
             <h2><?php esc_html_e( 'مدیریت صف', 'ai-content-manager' ); ?></h2>
@@ -197,7 +200,8 @@ final class QueueManagerPage {
             echo '<p>' . esc_html( $output['excerpt'] ?? '' ) . '</p>';
             echo '<div>' . wp_kses( $output['content'] ?? '', \AIContentManager\Services\ArticleOutputValidator::allowed_html() ) . '</div>';
             foreach ( array( 'slug' => __( 'نامک', 'ai-content-manager' ), 'primary_keyword' => __( 'کلمه کلیدی اصلی', 'ai-content-manager' ), 'suggested_meta_description' => __( 'توضیحات متا', 'ai-content-manager' ), 'image_prompt' => __( 'پیشنهاد تصویر', 'ai-content-manager' ) ) as $field => $label ) {
-                echo '<p><strong>' . esc_html( $label ) . ':</strong> ' . esc_html( $output[ $field ] ?? '' ) . '</p>';
+                $value = $output[ $field ] ?? '';
+                echo '<p><strong>' . esc_html( $label ) . ':</strong> ' . esc_html( is_string( $value ) ? $value : __( 'پیشنهاد ذخیره‌شده معتبر نیست؛ نیازمند بررسی است.', 'ai-content-manager' ) ) . '</p>';
             }
             echo '<p>' . esc_html__( 'کلمات کلیدی فرعی: ', 'ai-content-manager' ) . esc_html( implode( '، ', $output['secondary_keywords'] ?? array() ) ) . '</p>';
             echo '<h3>' . esc_html__( 'تیترها', 'ai-content-manager' ) . '</h3><ul>';
@@ -225,6 +229,14 @@ final class QueueManagerPage {
     }
 
     private function render_item_actions( $item, $filters, $page ) {
+        if ( ! empty( $item['post_id'] ) ) {
+            $post = get_post( (int) $item['post_id'] );
+            if ( 'trashed' !== $item['status'] && $post && $post->post_type === $item['content_type'] && current_user_can( 'edit_post', $post->ID ) ) {
+                echo '<a class="button" href="' . esc_url( wp_nonce_url( AdminPage::url( 'queue', array_merge( $filters, array( 'paged' => $page, 'seo_item' => $item['item_id'] ) ) ), 'acm_seo_compare_' . $item['item_id'] ) ) . '">' . esc_html__( 'بررسی و اعمال اطلاعات سئو', 'ai-content-manager' ) . '</a>';
+            } elseif ( 'trashed' === $item['status'] ) {
+                echo '<button type="button" class="button" disabled>' . esc_html__( 'اطلاعات سئو در زباله‌دان صف غیرفعال است', 'ai-content-manager' ) . '</button>';
+            }
+        }
         $actions = array();
         if ( 'generated' === $item['status'] ) { $actions['draft'] = empty( $item['post_id'] ) ? __( 'ایجاد پیش‌نویس وردپرس', 'ai-content-manager' ) : __( 'بررسی یا تکمیل پیش‌نویس', 'ai-content-manager' ); }
         if ( in_array( $item['status'], array( 'pending', 'failed', 'generated' ), true ) ) { $actions['trash'] = __( 'انتقال به زباله‌دان', 'ai-content-manager' ); }
@@ -256,7 +268,7 @@ final class QueueManagerPage {
         $notice = get_transient( $key );
         if ( ! is_array( $notice ) ) { return; }
         delete_transient( $key );
-        echo '<div class="notice ' . ( ! empty( $notice['error'] ) ? 'notice-error' : 'notice-success' ) . '"><p>' . esc_html( $notice['message'] ) . '</p>';
+        echo '<div class="notice ' . ( ! empty( $notice['error'] ) ? 'notice-error' : ( ! empty( $notice['warning'] ) ? 'notice-warning' : 'notice-success' ) ) . '"><p>' . esc_html( $notice['message'] ) . '</p>';
         if ( ! empty( $notice['details'] ) ) { echo '<details><summary>' . esc_html__( 'جزئیات هر آیتم', 'ai-content-manager' ) . '</summary><ul>'; foreach ( $notice['details'] as $detail ) { echo '<li>' . esc_html( $detail ) . '</li>'; } echo '</ul></details>'; }
         echo '</div>';
     }

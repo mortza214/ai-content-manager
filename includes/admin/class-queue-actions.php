@@ -24,6 +24,14 @@ final class QueueActions {
             $id = isset( $_POST['item_id'] ) && is_scalar( $_POST['item_id'] ) ? filter_var( $_POST['item_id'], FILTER_VALIDATE_INT, array( 'options' => array( 'min_range' => 1 ) ) ) : false;
             $result = $id ? $this->drafts->create( $id ) : new \WP_Error( 'acm_invalid_id', __( 'شناسه آیتم معتبر نیست.', 'ai-content-manager' ) );
             $notice = array( 'message' => is_wp_error( $result ) ? $result->get_error_message() : sprintf( __( 'پیش‌نویس #%d آماده است؛ انتشار انجام نشد.', 'ai-content-manager' ), $result ), 'error' => is_wp_error( $result ) );
+            $seo = $this->drafts->seo_result();
+            if ( ! is_wp_error( $result ) && null !== $seo ) {
+                $notice['details'] = QueueSeoPage::details( $seo );
+                if ( is_wp_error( $seo ) || ! empty( $seo['review'] ) ) {
+                    $notice['message'] = __( 'پیش‌نویس ایجاد شد؛ تکمیل اطلاعات سئو نیازمند بررسی است.', 'ai-content-manager' );
+                    $notice['warning'] = true;
+                }
+            }
         } else {
             $ids = $bulk ? ( isset( $_POST['item_ids'] ) && is_array( $_POST['item_ids'] ) ? wp_unslash( $_POST['item_ids'] ) : array() ) : array( $_POST['item_id'] ?? '' );
             $result = $this->trash->apply( $ids, 'restore' === $operation );

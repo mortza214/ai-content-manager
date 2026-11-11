@@ -8,18 +8,33 @@ final class DraftCreator {
     private $repository;
     private $wpml;
     private $validator;
-    public function __construct( $repository, $wpml = null, $validator = null ) {
+    private $seo;
+    private $seo_result;
+    private $completed = false;
+    public function __construct( $repository, $wpml = null, $validator = null, $seo = null ) {
         $this->repository = $repository;
         $this->wpml = $wpml ?: new Wpml();
         $this->validator = $validator ?: new ArticleOutputValidator();
+        $this->seo = $seo ?: new QueueSeo( $repository );
     }
 
+    public function seo_result() { return $this->seo_result; }
+
     public function create( $item_id ) {
+        $this->seo_result = null;
+        $this->completed = false;
         if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->error( __( 'مجوز ایجاد پیش‌نویس هوشمند را ندارید.', 'ai-content-manager' ) ); }
         if ( ! $this->repository->lock_item( $item_id ) ) { return $this->error( __( 'این آیتم در حال پردازش است؛ دوباره تلاش کنید.', 'ai-content-manager' ) ); }
-        try { return $this->create_locked( $item_id ); }
+        try { $result = $this->create_locked( $item_id ); }
         catch ( \Throwable $error ) { return $this->error( __( 'تکمیل پیش‌نویس انجام نشد. دوباره همین عملیات را اجرا کنید؛ نوشته جدید خودکار جایگزین نمی‌شود.', 'ai-content-manager' ) ); }
         finally { $this->repository->unlock_item( $item_id ); }
+        // SEO has its own result and lock; it can never turn a completed draft into a failure.
+        if ( ! is_wp_error( $result ) && $this->completed ) {
+            try {
+                if ( $this->seo->enabled() ) { $this->seo_result = $this->seo->apply( $item_id, array(), array(), true ); }
+            } catch ( \Throwable $error ) { $this->seo_result = new \WP_Error( 'acm_seo_error', __( 'تکمیل اطلاعات سئو نیازمند بررسی است.', 'ai-content-manager' ) ); }
+        }
+        return $result;
     }
 
     private function create_locked( $item_id ) {
@@ -28,7 +43,7 @@ final class DraftCreator {
         if ( ! in_array( $item['content_type'], array( 'post', 'page' ), true ) ) { return $this->error( __( 'ایجاد پیش‌نویس فقط برای نوشته و برگه پشتیبانی می‌شود؛ محصول پشتیبانی نمی‌شود.', 'ai-content-manager' ) ); }
         $type = get_post_type_object( $item['content_type'] );
         if ( ! $type || ! current_user_can( $type->cap->create_posts ) ) { return $this->error( __( 'مجوز ایجاد این نوع نوشته را ندارید.', 'ai-content-manager' ) ); }
-        $output = $this->validator->validate( $item['generated_output'] ?? '' );
+        $output = $this->validator->validate_for_draft( $item['generated_output'] ?? '' );
         if ( is_wp_error( $output ) ) { return $output; }
         $payload = json_decode( $item['payload'], true );
         $category = $this->validated_category( is_array( $payload ) ? ( $payload['category'] ?? null ) : null, $item['content_type'] );
@@ -97,6 +112,7 @@ final class DraftCreator {
         $language = $this->wpml->assign_language( $post_id, $item['content_type'], $item['language'] );
         if ( is_wp_error( $language ) ) { return $language; }
         $ready = $this->repository->save_draft_fields( $item_id, array( 'draft_state' => 'ready' ), sprintf( __( 'پیش‌نویس #%d با موفقیت تکمیل شد؛ انتشار انجام نشد.', 'ai-content-manager' ), $post_id ) );
+        $this->completed = ! is_wp_error( $ready );
         return is_wp_error( $ready ) ? $ready : (int) $post_id;
     }
 
