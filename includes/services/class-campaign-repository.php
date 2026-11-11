@@ -168,6 +168,55 @@ class CampaignRepository {
         $row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->table( '_steps' ) . " WHERE campaign_id = %d AND kind = %s AND state = 'complete' ORDER BY step_id DESC LIMIT 1", $campaign_id, $kind ), ARRAY_A );
         return $row ? json_decode( $row['output'], true ) : null;
     }
+    /** خروجی اصلی موضوع‌یابی تغییر نمی‌کند؛ گزارش‌های بررسی رکورد جدا دارند. */
+    public function discovery( $id ) {
+        global $wpdb;
+        return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->table( '_steps' ) . " WHERE campaign_id = %d AND kind = 'discover' AND state IN ('complete','result') ORDER BY step_id DESC LIMIT 1", $id ), ARRAY_A );
+    }
+    public function record_admission( $campaign, $source, $report, $mode, $step_id = 0 ) {
+        global $wpdb;
+        // فقط شناسه مرجع و امتیازها؛ متن، عنوان و قطعهٔ خصوصی corpus در سابقه کپی نمی‌شوند.
+        $report = array_intersect_key( $report, array_flip( array( 'algorithm', 'decisions', 'corpus_count' ) ) );
+        $report += array( 'discovery_step_id' => (int) $source['step_id'], 'discovery_hash' => hash( 'sha256', $source['output'] ),
+            'admit_step_id' => (int) $step_id, 'mode' => $mode, 'actor' => get_current_user_id(), 'evaluated_at' => $this->date() );
+        $ok = $wpdb->insert( $this->table( '_steps' ), array( 'campaign_id' => (int) $campaign['campaign_id'], 'item_id' => 0, 'kind' => 'admit_review', 'source_index' => 0,
+            'attempt_id' => wp_generate_uuid4(), 'state' => 'complete', 'lease_until' => $this->date(), 'output' => wp_json_encode( $report ), 'api_metadata' => null,
+            'error_message' => '', 'created_at' => $this->date(), 'updated_at' => $this->date() ) );
+        return false === $ok ? $this->error() : (int) $wpdb->insert_id;
+    }
+    public function latest_admission( $id ) { return $this->latest_output( $id, 'admit_review' ); }
+    public function has_items( $id ) {
+        global $wpdb;
+        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}acm_queue WHERE campaign_id = %d", $id ) );
+        return $wpdb->last_error || (int) $count > 0;
+    }
+    public function unsettled( $id ) {
+        global $wpdb;
+        $count = $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . $this->table( '_steps' ) . " WHERE campaign_id = %d AND state IN ('claimed','reserved')", $id ) );
+        return $wpdb->last_error || (int) $count > 0;
+    }
+    /** تغییر فاز فقط با تأیید جداگانه؛ هیچ خروجی یا مصرف قبلی پاک نمی‌شود. */
+    public function restart_discovery( $expected, $config, $source ) {
+        global $wpdb;
+        if ( false === $wpdb->query( 'START TRANSACTION' ) ) { return $this->error(); }
+        try {
+            $row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . $this->table( 's' ) . ' WHERE campaign_id = %d FOR UPDATE', $expected['campaign_id'] ), ARRAY_A );
+            $fresh_source = $row ? $this->discovery( $row['campaign_id'] ) : null;
+            if ( ! $row || ! current_user_can( 'manage_ai_content' ) || ( (int) $row['owner_id'] !== get_current_user_id() && ! current_user_can( 'manage_options' ) ) ||
+                $row['config'] !== $expected['config'] || $row['status'] !== $expected['status'] || 'admit' !== $row['phase'] || ! in_array( $row['status'], array( 'review','paused','budget' ), true ) ||
+                $this->has_items( $row['campaign_id'] ) || $this->unsettled( $row['campaign_id'] ) || $this->call_count( $row['campaign_id'], 0 ) >= 2 ||
+                ! $fresh_source || (int) $fresh_source['step_id'] !== (int) $source['step_id'] || $fresh_source['output'] !== $source['output'] ) { $wpdb->query( 'ROLLBACK' ); return $this->error(); }
+            $retired = $wpdb->query( $wpdb->prepare( 'UPDATE ' . $this->table( '_steps' ) . " SET state = 'superseded', error_message = %s WHERE campaign_id = %d AND kind = 'admit' AND state = 'result'",
+                __( 'نتیجه پذیرش قبلی با اقدام صریح موضوع‌یابی تازه جایگزین شد؛ خروجی و سابقه حفظ شده‌اند.', 'ai-content-manager' ), $row['campaign_id'] ) );
+            $changed = $wpdb->update( $this->table( 's' ), array( 'config' => wp_json_encode( $config ), 'phase' => 'discover', 'status' => 'active', 'next_run_at' => $this->date(),
+                'last_error' => __( 'موضوع‌یابی تازه با تأیید هزینه درخواست شد؛ سقف دو تلاش و سابقه مصرف قبلی برقرار است.', 'ai-content-manager' ), 'updated_at' => $this->date() ), array( 'campaign_id' => $row['campaign_id'], 'status' => $row['status'], 'config' => $row['config'] ) );
+            $event = $wpdb->insert( $this->table( '_steps' ), array( 'campaign_id' => (int) $row['campaign_id'], 'item_id' => 0, 'kind' => 'control', 'source_index' => 0, 'attempt_id' => wp_generate_uuid4(),
+                'state' => 'complete', 'lease_until' => $this->date(), 'output' => wp_json_encode( array( 'operation' => 'rediscover', 'actor' => get_current_user_id(), 'previous_discovery' => (int) $source['step_id'] ) ),
+                'api_metadata' => null, 'error_message' => __( 'موضوع‌یابی تازه صریحاً تأیید شد؛ سابقه پاک نشد.', 'ai-content-manager' ), 'created_at' => $this->date(), 'updated_at' => $this->date() ) );
+            if ( false === $retired || 1 !== $changed || false === $event || false === $wpdb->query( 'COMMIT' ) ) { $wpdb->query( 'ROLLBACK' ); return $this->error(); }
+            return true;
+        } catch ( \Throwable $error ) { $wpdb->query( 'ROLLBACK' ); return $this->error(); }
+    }
     /** Store validated result durably before trying to mutate the queue. */
     public function save_result( $claim, $output ) {
         global $wpdb;

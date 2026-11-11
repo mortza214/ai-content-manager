@@ -31,6 +31,7 @@ final class CampaignSqlite {
     public $prefix = 'wp_'; public $posts = 'wp_posts'; public $term_relationships = 'wp_term_relationships'; public $term_taxonomy = 'wp_term_taxonomy';
     public $last_error = ''; public $insert_id = 0; public $pdo; public $locks = array(); public $block_worker = false;
     public $fail_output = false; public $fail_result = false; public $fail_usage = false; public $error_detail = '';
+    public $fail_review = false;
     public function __construct() {
         $this->pdo = new PDO( 'sqlite::memory:' ); $this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
         $this->pdo->exec( "CREATE TABLE wp_acm_campaigns (campaign_id INTEGER PRIMARY KEY AUTOINCREMENT, submission_id TEXT UNIQUE, owner_id INTEGER, keyword TEXT, language TEXT, config TEXT, status TEXT, phase TEXT, target_count INTEGER, accepted_count INTEGER, completed_count INTEGER, next_run_at TEXT, last_started_day TEXT, last_error TEXT, created_at TEXT, updated_at TEXT);
@@ -72,6 +73,7 @@ final class CampaignSqlite {
         $s = $this->statement( $sql ); return $s ? $s->fetchColumn() : null;
     }
     public function insert( $table, $row, ...$formats ) {
+        if ( $this->fail_review && 'wp_acm_campaign_steps' === $table && 'admit_review' === ( $row['kind'] ?? '' ) ) { return false; }
         $keys = array_keys( $row ); $sql = 'INSERT INTO ' . $table . ' (' . implode( ',', $keys ) . ') VALUES (' . implode( ',', array_fill( 0, count( $keys ), '?' ) ) . ')';
         $this->last_error = '';
         try { $s = $this->pdo->prepare( $sql ); $s->execute( array_values( $row ) ); $this->insert_id = (int) $this->pdo->lastInsertId(); return $s->rowCount(); }
@@ -100,7 +102,7 @@ function topics_fixture() {
 function article_fixture() { return array( 'title' => 'مقاله پژوهش‌شده', 'slug' => 'researched-article', 'excerpt' => 'خلاصه پژوهش', 'content' => '<h2>بررسی</h2><p>مقاله مستقل با منابع بررسی‌شده برای بازبینی انسانی.</p>', 'primary_keyword' => 'کش امن', 'secondary_keywords' => array( 'ذخیره‌سازی' ), 'suggested_meta_description' => 'خلاصه متای پژوهش', 'headings' => array( array( 'level' => 2, 'text' => 'بررسی' ) ), 'faq' => array(), 'image_prompt' => 'تصویر تولید نمی‌شود' ); }
 function response_fixture( $body ) {
     $schema = $body['text']['format']['schema']['properties'];
-    if ( isset( $schema['topics'] ) ) { $value = array( 'topics' => array_slice( topics_fixture(), 0, $GLOBALS['fixture_topic_count'] ?? 3 ) ); }
+    if ( isset( $schema['topics'] ) ) { $value = array( 'topics' => $GLOBALS['fixture_topics_override'] ?? array_slice( topics_fixture(), 0, $GLOBALS['fixture_topic_count'] ?? 3 ) ); }
     elseif ( isset( $schema['sources'] ) ) {
         $value = array( 'sources' => array( array( 'url' => 'https://docs.example.org/first', 'title' => 'Untrusted title' ), array( 'url' => 'https://docs.example.org/second', 'title' => 'Other title' ) ), 'claims' => array(), 'unsupported_claims' => array() );
         foreach ( $value['sources'] as $source ) { $value['claims'][] = array( 'claim' => 'ادعای آزمایشی نیازمند بازبینی انسانی', 'evidence' => 'Evidence from an independently fetched primary source.', 'url' => $source['url'] ); }
@@ -117,6 +119,7 @@ function setup_campaign() {
     $GLOBALS['fixture_allow_reference_tags'] = true; $GLOBALS['fixture_current_user'] = 7; $GLOBALS['fixture_timezone'] = 'Asia/Tehran'; $GLOBALS['source_gets'] = 0; $GLOBALS['api_calls'] = 0; $GLOBALS['scheduled'] = array();
     foreach ( array( 'bad_quote','oversize','unsupported','private_dns','no_search','during_http','fixture_topic_count','api_status','source_status','denied_creators','cron_hook','doing_cron','term_write_error','during_terms','during_insert','post_capabilities' ) as $k ) { unset( $GLOBALS[$k] ); }
     unset( $GLOBALS['fixture_user_caps'] );
+    unset( $GLOBALS['fixture_topics_override'] );
     $GLOBALS['fixture_posts'] = $GLOBALS['assigned_terms'] = array(); $GLOBALS['insert_calls'] = 0;
     $caps = array_fill_keys( array( 'manage_ai_content','manage_options','edit_posts','edit_others_posts','assign_terms','edit_post' ), true );
     $options = array( 'acm_db_version' => '1.4.0', 'acm_campaign_enabled' => '1', 'acm_settings' => array( 'daily_token_limit' => 1000000 ) );
@@ -136,6 +139,8 @@ function start_campaign( $id ) { global $service, $campaigns; $quote = $service-
 function create_started() { global $service; $id = $service->create( campaign_input() ); if ( is_wp_error( $id ) ) { throw new RuntimeException( $id->get_error_message() ); } $ok = start_campaign( $id ); if ( is_wp_error( $ok ) ) { throw new RuntimeException( $ok->get_error_message() ); } return $id; }
 function step_ok() { global $worker, $wpdb; $r = $worker->run_once(); if ( is_wp_error( $r ) ) { throw new RuntimeException( $r->get_error_message() . ' ' . $wpdb->error_detail ); } return $r; }
 function to_generation() { for ( $i = 0; $i < 5; $i++ ) { step_ok(); } }
+
+if ( defined( 'ACM_TOPIC_BOOTSTRAP_ONLY' ) ) { return; }
 
 setup_campaign(); $input = campaign_input(); $id = $service->create( $input );
 verify( is_int( $id ) && 'draft' === $campaigns->get( $id )['status'] && 0 === $api_calls && $id === $service->create( $input ), 'create inactive, server owner, idempotent submission, zero transport' );
@@ -226,9 +231,9 @@ verify( 23 * 3600 === strtotime( $campaigns->next_day() . ' UTC' ) - $clock, 'ne
 
 setup_campaign(); $diversity = new AIContentManager\Services\TopicDiversity(); $topics = topics_fixture();
 verify( 3 === count( $diversity->accept( $topics, 'کش امن', array(), 3 ) ), 'three distinct intents and questions accepted' );
-verify( 1 === count( $diversity->accept( array( $topics[0], $topics[0] ), 'کش امن', array(), 3 ) ), 'paraphrase quota is never padded with duplicate intent' );
+verify( 1 === count( $diversity->accept( array( $topics[0], $topics[0] ), 'کش امن', array(), 3 ) ), 'quota is never padded with identical core question' );
 $corpus = array( array( 'profile' => $topics[0], 'keyword' => 'کش امن', 'text' => 'existing' ) );
-verify( 2 === count( $diversity->accept( $topics, 'کش امن', $corpus, 3 ) ), 'existing campaign profile prevents repeated intent across campaigns' );
+verify( 2 === count( $diversity->accept( $topics, 'کش امن', $corpus, 3 ) ), 'existing campaign profile prevents repeated core question across campaigns' );
 setup_campaign(); $id = create_started(); $fixture_topic_count = 2; step_ok(); step_ok();
 verify( 2 === (int) $campaigns->get( $id )['accepted_count'] && '' !== $campaigns->get( $id )['last_error'], 'fewer independent topics explicitly reported without padding' );
 
@@ -258,7 +263,7 @@ step_ok(); // Same campaign generation.
 step_ok(); // Same campaign draft; next article deferred.
 step_ok(); // Second campaign discovery.
 $worker->run_once();
-verify( 'review' === $campaigns->get( $other )['status'] && 3 === (int) $wpdb->get_var( 'SELECT COUNT(*) FROM wp_acm_queue' ), 'second campaign cannot admit matching intents from existing queue corpus' );
+verify( 'review' === $campaigns->get( $other )['status'] && 3 === (int) $wpdb->get_var( 'SELECT COUNT(*) FROM wp_acm_queue' ), 'second campaign cannot admit matching core questions from existing queue corpus' );
 
 setup_campaign(); $input = campaign_input(); $input['user_id'] = 9; $input['owner_id'] = 9; $id = $service->create( $input );
 verify( 7 === (int) $campaigns->get( $id )['owner_id'], 'browser owner and user IDs never select execution principal' );

@@ -36,12 +36,55 @@ final class CampaignService {
     public function accessible( $campaign ) {
         return $campaign && current_user_can( 'manage_ai_content' ) && ( (int) $campaign['owner_id'] === get_current_user_id() || current_user_can( 'manage_options' ) );
     }
-    public function quote( $campaign ) {
+    public function quote( $campaign, $purpose = 'start' ) {
         $config = json_decode( $campaign['config'], true ); $rates = CampaignPricing::snapshot();
         $valid = CampaignPricing::valid( $rates, $this->repository->now() );
         $estimate = $valid ? CampaignPricing::estimate( $config['target'], $config['max_calls'], $rates ) : null;
         return array( 'valid' => $valid, 'estimate' => $estimate, 'rates' => $rates,
-            'signature' => hash_hmac( 'sha256', wp_json_encode( array( (int) $campaign['campaign_id'], $campaign['config'], $rates, get_current_user_id() ) ), wp_salt( 'auth' ) ) );
+            'signature' => hash_hmac( 'sha256', wp_json_encode( array( (int) $campaign['campaign_id'], $campaign['config'], $rates, get_current_user_id(), $purpose ) ), wp_salt( 'auth' ) ) );
+    }
+    public function source_signature( $campaign, $source ) {
+        return hash_hmac( 'sha256', wp_json_encode( array( (int) $campaign['campaign_id'], (int) $source['step_id'], hash( 'sha256', $source['output'] ), get_current_user_id() ) ), wp_salt( 'auth' ) );
+    }
+    private function saved_source( $id, $signature ) {
+        $campaign = $this->repository->get( $id ); $source = $this->repository->discovery( $id );
+        if ( ! $this->accessible( $campaign ) || ! $source || 'admit' !== $campaign['phase'] || ! in_array( $campaign['status'], array( 'review','paused','budget' ), true ) ||
+            $this->repository->has_items( $id ) || $this->repository->unsettled( $id ) || ! is_string( $signature ) || ! hash_equals( $this->source_signature( $campaign, $source ), $signature ) ) { return $this->error( __( 'بررسی خروجی ذخیره‌شده فقط برای کمپین متوقف در پذیرش، بدون آیتم پذیرفته‌شده و با فرم تازه مجاز است.', 'ai-content-manager' ) ); }
+        $output = json_decode( $source['output'], true ); $topics = $output['value']['topics'] ?? null;
+        if ( ! is_array( $topics ) || count( $topics ) > 10 ) { return $this->error( __( 'ساختار پیشنهادهای ذخیره‌شده معتبر نیست؛ خروجی اصلی حفظ شد.', 'ai-content-manager' ) ); }
+        foreach ( $topics as $topic ) {
+            foreach ( array( 'title','question','angle' ) as $field ) { if ( ! is_string( $topic[$field] ?? null ) || strlen( $topic[$field] ) > 2500 || ! preg_match( '//u', $topic[$field] ) ) { return $this->error( __( 'پروفایل پیشنهاد ذخیره‌شده معتبر نیست؛ هیچ داده‌ای پاک نشد.', 'ai-content-manager' ) ); } }
+        }
+        return array( $campaign, $source, $topics );
+    }
+    public function review_saved( $id, $signature ) {
+        if ( ! current_user_can( 'manage_ai_content' ) || ! $this->queue->lock_worker() ) { return $this->error( __( 'مجوز مدیریت و آزادبودن اجرای سراسری برای بررسی محلی لازم است.', 'ai-content-manager' ) ); }
+        $locked = false;
+        try {
+            $saved = $this->saved_source( $id, $signature ); if ( is_wp_error( $saved ) ) { return $saved; }
+            if ( ! $this->queue->lock_topics() ) { return $this->error( __( 'پذیرش موضوع دیگری در جریان است؛ دوباره بررسی کنید.', 'ai-content-manager' ) ); } $locked = true;
+            list( $campaign, $source, $topics ) = $saved;
+            $corpus = $this->queue->duplicate_corpus(); if ( is_wp_error( $corpus ) ) { return $corpus; }
+            $report = ( new TopicDiversity() )->review( $topics, $campaign['keyword'], $corpus, (int) $campaign['target_count'] );
+            $recorded = $this->repository->record_admission( $campaign, $source, $report, 'manual' );
+            return is_wp_error( $recorded ) ? $recorded : array( 'message' => __( 'بررسی محلی پیشنهادهای ذخیره‌شده ثبت شد؛ صفر درخواست شبکه و صفر مصرف تازه. هنوز آیتمی پذیرفته یا کمپینی فعال نشده است؛ پس از بررسی نتیجه، ادامه کمپین را جداگانه تأیید کنید.', 'ai-content-manager' ) );
+        } catch ( \Throwable $error ) { return $this->error( __( 'بررسی محلی کامل نشد؛ هیچ درخواست شبکه‌ای ارسال نشد و خروجی و مصرف قبلی حفظ شدند.', 'ai-content-manager' ) ); }
+        finally { if ( $locked ) { $this->queue->unlock_topics(); } $this->queue->unlock_worker(); }
+    }
+    public function rediscover( $id, $confirmed, $signature, $source_signature ) {
+        if ( ! current_user_can( 'manage_ai_content' ) || ! $this->queue->lock_worker() ) { return $this->error( __( 'مجوز مدیریت و آزادبودن اجرای سراسری لازم است.', 'ai-content-manager' ) ); }
+        try {
+            $saved = $this->saved_source( $id, $source_signature ); if ( is_wp_error( $saved ) ) { return $saved; } list( $campaign, $source ) = $saved;
+            $review = $this->repository->latest_admission( $id ); $quote = $this->quote( $campaign, 'rediscover' ); $owner = get_userdata( (int) $campaign['owner_id'] );
+            if ( true !== $confirmed || ! is_string( $signature ) || ! hash_equals( $quote['signature'], $signature ) || ! $review ||
+                ( $review['discovery_hash'] ?? '' ) !== hash( 'sha256', $source['output'] ) || ! empty( array_filter( $review['decisions'] ?? array(), static function ( $decision ) { return 'rejected' !== ( $decision['status'] ?? '' ); } ) ) ) { return $this->error( __( 'موضوع‌یابی تازه نیازمند بررسی مستند پیشنهادها، فرم تازه و تأیید جداگانه هزینه است؛ برای پیشنهاد قابل پذیرش، ابتدا ادامهٔ همان خروجی را بررسی کنید.', 'ai-content-manager' ) ); }
+            if ( '0' === get_option( 'acm_campaign_enabled', '1' ) || ! $owner || ! user_can( $owner, 'manage_ai_content' ) || ! user_can( $owner, 'edit_posts' ) || ! $quote['valid'] || ! ( new \AIContentManager\Integrations\OpenAi() )->has_api_key() ) { return $this->error( __( 'مالک مجاز، افزونه فعال، کلید و قیمت تازه تأییدشده برای درخواست هزینه‌دار لازم‌اند.', 'ai-content-manager' ) ); }
+            if ( $this->repository->call_count( $id, 0 ) >= 2 || $this->repository->retry_not_before( $id ) > $this->repository->now() ) { return $this->error( __( 'سقف دو تلاش موضوع‌یابی رسیده یا فاصله امن تلاش قبلی نگذشته است؛ مصرف و سقف تلاش بازنشانی نمی‌شوند.', 'ai-content-manager' ) ); }
+            $sum = $this->repository->money_summary( $id ); $config = json_decode( $campaign['config'], true );
+            if ( is_wp_error( $sum ) || $sum['actual'] + $sum['reserved'] + $quote['estimate']['per_call'] > $config['budget_micros'] ) { return $this->error( __( 'بودجه با احتساب مصرف و رزرو قبلی برای موضوع‌یابی تازه کافی نیست.', 'ai-content-manager' ) ); }
+            $config['rates'] = $quote['rates'];
+            return $this->repository->restart_discovery( $campaign, $config, $source );
+        } finally { $this->queue->unlock_worker(); }
     }
     public function start( $id, $confirmed, $signature ) {
         $campaign = $this->repository->get( $id );
