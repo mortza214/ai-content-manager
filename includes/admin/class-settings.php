@@ -45,6 +45,7 @@ final class Settings {
         $this->add_field( 'featured_images', __( 'تصویر شاخص (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_features', 'render_featured_images_field' );
         $this->add_field( 'web_research', __( 'پژوهش وب (هنوز اجرا نمی‌شود)', 'ai-content-manager' ), 'acm_features', 'render_web_research_field' );
         $this->add_field( 'integration_status', __( 'یکپارچه‌سازی‌های شناسایی‌شده', 'ai-content-manager' ), 'acm_integrations', 'render_integrations_field' );
+        $this->add_field( 'yoast_on_draft', __( 'تکمیل اطلاعات Yoast هنگام ایجاد پیش‌نویس', 'ai-content-manager' ), 'acm_integrations', 'render_yoast_field' );
         $this->add_field( 'openai_api_key', __( 'کلید API', 'ai-content-manager' ), 'acm_openai', 'render_openai_api_key_field' );
         $this->add_field( 'openai_model', __( 'مدل', 'ai-content-manager' ), 'acm_openai', 'render_openai_model_field' );
         $this->add_field( 'openai_test', __( 'اتصال', 'ai-content-manager' ), 'acm_openai', 'render_openai_test_field' );
@@ -137,6 +138,7 @@ final class Settings {
         $frequency = isset( $input['schedule_frequency'] ) ? sanitize_key( $input['schedule_frequency'] ) : $defaults['schedule_frequency'];
         $output['schedule_frequency'] = in_array( $frequency, array( 'hourly', 'daily', 'weekly' ), true ) ? $frequency : $defaults['schedule_frequency'];
         $output['seo_audit']       = ! empty( $input['seo_audit'] );
+        $output['yoast_on_draft'] = isset( $input['yoast_on_draft'] ) && in_array( $input['yoast_on_draft'], array( '1', 1, true ), true );
         $output['featured_images'] = ! empty( $input['featured_images'] );
         $output['web_research']    = ! empty( $input['web_research'] );
 
@@ -189,6 +191,7 @@ final class Settings {
             'scheduled_publishing'  => false,
             'schedule_frequency'    => 'daily',
             'seo_audit'             => true,
+            'yoast_on_draft'        => false,
             'featured_images'        => false,
             'web_research'           => false,
             'openai_model'           => 'gpt-4o-mini',
@@ -203,6 +206,14 @@ final class Settings {
             $saved['publishing_mode'] = $saved['auto_publish'] ? 'auto_publish' : 'require_approval';
         }
         return wp_parse_args( $saved, $this->defaults() );
+    }
+
+    /** Optional metadata completion never changes existing drafts on settings save. */
+    public function render_yoast_field() {
+        $values = $this->values();
+        echo '<label><input type="checkbox" name="acm_settings[yoast_on_draft]" value="1" ' . ( $values['yoast_on_draft'] ? 'checked' : '' ) . '> ' . esc_html__( 'تکمیل اطلاعات Yoast هنگام ایجاد پیش‌نویس', 'ai-content-manager' ) . '</label>';
+        echo '<p class="description">' . esc_html__( 'فقط عبارت اصلی و توضیحات متای خالی، پس از تکمیل پیش‌نویس پر می‌شوند. تغییر این گزینه نوشته‌های قبلی را تغییر نمی‌دهد.', 'ai-content-manager' ) . '</p>';
+        echo '<p>' . esc_html( ( new \AIContentManager\Integrations\Yoast() )->available() ? __( 'Yoast SEO فعال است.', 'ai-content-manager' ) : __( 'Yoast SEO فعال نیست', 'ai-content-manager' ) ) . '</p>';
     }
 
     /** Render the operating mode selector. */

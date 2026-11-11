@@ -13,3 +13,5 @@
     .acm-admin .form-table th, .acm-admin .form-table td { display: block; width: auto; }
     .acm-admin .form-table td { padding-inline: 0; }
 }
+.acm-seo-field { border: 1px solid #c3c4c7; padding: 12px; margin: 16px 0; max-width: 900px; }
+.acm-seo-value { white-space: pre-wrap; overflow-wrap: anywhere; }

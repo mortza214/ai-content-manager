@@ -392,6 +392,45 @@ final class QueueRepository {
         return $ids ? (int) $ids[0] : 0;
     }
 
+    /** Caller holds item lock and authorizes the linked draft. Preserve the generated history. */
+    public function save_seo_keyword( $item, $value ) {
+        global $wpdb;
+        if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
+        $payload = json_decode( $item['payload'], true );
+        if ( ! is_array( $payload ) ) { return $this->storage_error(); }
+        $payload['seo_review'] = array( 'primary_keyword' => $value, 'post_id' => (int) $item['post_id'],
+            'draft_token' => $item['draft_token'], 'output_hash' => hash( 'sha256', $item['generated_output'] ) );
+        $encoded = wp_json_encode( $payload );
+        if ( ! is_string( $encoded ) ) { return $this->storage_error(); }
+        if ( $encoded === $item['payload'] ) { return true; }
+        // Compare-and-swap also protects against writers which do not share the item lock.
+        $changed = $wpdb->update( $wpdb->prefix . 'acm_queue', array( 'payload' => $encoded ),
+            array( 'item_id' => (int) $item['item_id'], 'payload' => $item['payload'], 'status' => $item['status'],
+                'post_id' => (int) $item['post_id'], 'draft_token' => $item['draft_token'], 'generated_output' => $item['generated_output'] ) );
+        return 1 === $changed ? true : $this->storage_error();
+    }
+
+    /** Caller holds item lock. Store only outcome codes, never output or API metadata. */
+    public function record_seo_result( $item_id, $post_id, $fields, $automatic ) {
+        global $wpdb;
+        if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
+        if ( ! array_diff( $fields, array( 'skipped' ) ) ) { return true; }
+        $prefix = __( 'نتیجه اطلاعات سئو: ', 'ai-content-manager' );
+        $message = $prefix . wp_json_encode( array( 'post_id' => (int) $post_id, 'mode' => $automatic ? 'automatic' : 'manual', 'fields' => $fields ) );
+        $previous = $wpdb->get_var( $wpdb->prepare( "SELECT message FROM {$wpdb->prefix}acm_queue_events WHERE item_id = %d AND message LIKE %s ORDER BY event_id DESC LIMIT 1", $item_id, $wpdb->esc_like( $prefix ) . '%' ) );
+        if ( $wpdb->last_error ) { return $this->storage_error(); }
+        if ( is_string( $previous ) && ! in_array( 'applied', $fields, true ) ) {
+            $prior = json_decode( substr( $previous, strlen( $prefix ) ), true );
+            $normalize = static function ( $results ) { return array_map( static function ( $status ) { return 'applied' === $status ? 'equal' : $status; }, $results ); };
+            if ( is_array( $prior ) && (int) ( $prior['post_id'] ?? 0 ) === (int) $post_id &&
+                ( $prior['mode'] ?? '' ) === ( $automatic ? 'automatic' : 'manual' ) &&
+                $normalize( $prior['fields'] ?? array() ) === $normalize( $fields ) ) { return true; }
+        }
+        $item = $this->get( $item_id );
+        if ( ! $item || false === $this->append_event( $item_id, $item['status'], $item['status'], $message ) ) { return $this->storage_error(); }
+        return true;
+    }
+
     private function append_event( $item_id, $from, $to, $message ) {
         global $wpdb;
         return $wpdb->insert( $wpdb->prefix . 'acm_queue_events', array( 'item_id' => (int) $item_id, 'status_from' => $from, 'status_to' => $to,
