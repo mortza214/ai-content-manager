@@ -505,16 +505,18 @@ final class QueueRepository {
     }
     public function duplicate_corpus() {
         global $wpdb;
-        $queue = $wpdb->get_results( "SELECT payload, generated_output FROM {$wpdb->prefix}acm_queue WHERE status <> 'trashed' ORDER BY item_id DESC LIMIT 501", ARRAY_A );
-        $posts = $wpdb->get_results( "SELECT post_title, post_excerpt, post_content FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status IN ('draft','publish','pending','future','private') ORDER BY ID DESC LIMIT 501", ARRAY_A );
-        if ( $wpdb->last_error || count( $queue ) + count( $posts ) > 500 ) { return new \WP_Error( 'acm_corpus_limit', __( 'حجم محتوای موجود از سقف بررسی محلی تکرار بیشتر است؛ برای حفظ ایمنی پذیرش موضوع نیازمند بررسی است.', 'ai-content-manager' ) ); }
+        $queue = $wpdb->get_results( "SELECT item_id, payload, generated_output FROM {$wpdb->prefix}acm_queue WHERE status <> 'trashed' OR topic_signature IS NOT NULL ORDER BY item_id DESC LIMIT 501", ARRAY_A );
+        if ( $wpdb->last_error || ! is_array( $queue ) ) { return $this->storage_error(); }
+        $posts = $wpdb->get_results( "SELECT ID, post_title, post_excerpt, post_content FROM {$wpdb->posts} WHERE post_type IN ('post','page') AND post_status IN ('draft','publish','pending','future','private') ORDER BY ID DESC LIMIT 501", ARRAY_A );
+        if ( $wpdb->last_error || ! is_array( $posts ) ) { return $this->storage_error(); }
+        if ( count( $queue ) + count( $posts ) > 500 ) { return new \WP_Error( 'acm_corpus_limit', __( 'حجم محتوای موجود از سقف بررسی محلی تکرار بیشتر است؛ برای حفظ ایمنی پذیرش موضوع نیازمند بررسی است.', 'ai-content-manager' ) ); }
         $result = array();
         foreach ( $queue as $row ) {
             $payload = json_decode( $row['payload'], true ); $output = json_decode( $row['generated_output'] ?? '', true );
-            $result[] = array( 'profile' => $payload['topic_profile'] ?? null, 'keyword' => $payload['primary_keyword'] ?? '',
-                'text' => ( $payload['topic'] ?? '' ) . ' ' . ( $output['excerpt'] ?? '' ) . ' ' . wp_strip_all_tags( $output['content'] ?? '' ) );
+            $result[] = array( 'kind' => 'queue', 'id' => (int) $row['item_id'], 'profile' => $payload['topic_profile'] ?? null, 'keyword' => $payload['primary_keyword'] ?? '',
+                'title' => $payload['topic'] ?? '', 'excerpt' => $output['excerpt'] ?? '', 'content' => $output['content'] ?? '' );
         }
-        foreach ( $posts as $row ) { $result[] = array( 'profile' => null, 'keyword' => '', 'text' => $row['post_title'] . ' ' . $row['post_excerpt'] . ' ' . wp_strip_all_tags( $row['post_content'] ) ); }
+        foreach ( $posts as $row ) { $result[] = array( 'kind' => 'post', 'id' => (int) $row['ID'], 'profile' => null, 'title' => $row['post_title'], 'excerpt' => $row['post_excerpt'], 'content' => $row['post_content'] ); }
         return $result;
     }
     /** This mutator runs inside the lease-checked result transaction, not a second transaction. */

@@ -109,16 +109,27 @@ final class BatchProcessor {
         $topic_lock = 'admit' === $claim['kind'];
         if ( $topic_lock && ! $this->queue->lock_topics() ) { return new \WP_Error( 'acm_topics_busy', __( 'پذیرش موضوع در حال اجراست؛ نتیجه ذخیره‌شده بعداً اعمال می‌شود.', 'ai-content-manager' ) ); }
         try {
-            $result = $this->campaigns->finish( $claim, function ( $stored, $campaign ) use ( $claim, $response ) {
+            $review = null;
+            if ( $topic_lock ) {
+                $source = $this->campaigns->discovery( $claim['campaign_id'] );
+                $discovered = $source ? json_decode( $source['output'], true ) : null;
+                if ( ! $source || ( $discovered['value']['topics'] ?? null ) !== ( $response['value']['topics'] ?? null ) ) { return $this->admission_error( $claim, new \WP_Error( 'acm_discovery_changed', __( 'خروجی موضوع‌یابی با نتیجه منتظر پذیرش همسان نیست؛ برای حفظ سابقه، پذیرش انجام نشد.', 'ai-content-manager' ) ) ); }
+                $corpus = $this->queue->duplicate_corpus(); if ( is_wp_error( $corpus ) ) { return $this->admission_error( $claim, $corpus ); }
+                $campaign = $this->campaigns->get( $claim['campaign_id'] );
+                $review = ( new TopicDiversity() )->review( $response['value']['topics'], $campaign['keyword'], $corpus, (int) $campaign['target_count'] );
+                // بیرون از تراکنش اعمال ذخیره می‌شود تا رد همهٔ پیشنهادها یا rollback، دلیل‌ها را پاک نکند.
+                $recorded = $this->campaigns->record_admission( $campaign, $source, $review, 'worker', $claim['step_id'] );
+                if ( is_wp_error( $recorded ) ) { return $this->admission_error( $claim, $recorded ); }
+            }
+            $result = $this->campaigns->finish( $claim, function ( $stored, $campaign ) use ( $claim, $response, $review ) {
                 $value = $response['value'];
                 switch ( $claim['kind'] ) {
                     case 'discover': return $this->campaigns->update_campaign( $campaign['campaign_id'], array( 'phase' => 'admit', 'next_run_at' => $this->campaigns->date() ) );
                     case 'admit':
                         $policy = GenerationPolicy::values();
                         if ( $policy['max_generation_items'] && (int) $campaign['target_count'] > $policy['max_generation_items'] ) { return new \WP_Error( 'acm_items_limit', __( 'تعداد هدف از سقف فعلی آیتم‌ها بیشتر است؛ خروجی موضوع‌یابی حفظ شد و پذیرش نیازمند بررسی تنظیمات است.', 'ai-content-manager' ) ); }
-                        $corpus = $this->queue->duplicate_corpus(); if ( is_wp_error( $corpus ) ) { return $corpus; }
-                        $topics = ( new TopicDiversity() )->accept( $value['topics'], $campaign['keyword'], $corpus, (int) $campaign['target_count'] );
-                        if ( ! $topics ) { return new \WP_Error( 'acm_no_topics', __( 'هیچ موضوع مستقل قابل پذیرش باقی نماند؛ تکرار سهمیه را پر نمی‌کند. خروجی موضوع‌یابی برای بررسی حفظ شد.', 'ai-content-manager' ) ); }
+                        $topics = $review['accepted'];
+                        if ( ! $topics ) { return new \WP_Error( 'acm_no_topics', __( 'با معیار این بررسی هیچ پیشنهادی پذیرفته نشد؛ دلیل، امتیاز و مرجع مقایسه در پیشنهادهای ذخیره‌شده قابل بررسی است. خروجی و مصرف قبلی حفظ شدند.', 'ai-content-manager' ) ); }
                         $ids = $this->queue->admit_campaign( $claim, $campaign, $topics ); if ( is_wp_error( $ids ) ) { return $ids; }
                         return $this->campaigns->update_campaign( $campaign['campaign_id'], array( 'phase' => 'articles', 'accepted_count' => count( $ids ), 'next_run_at' => $this->campaigns->date(),
                             'last_error' => count( $ids ) < $campaign['target_count'] ? __( 'موضوع مستقل کمتر از هدف پیدا شد؛ تعداد واقعی نمایش داده شده و موضوع تکراری وارد نشد.', 'ai-content-manager' ) : '' ) );
@@ -143,5 +154,8 @@ final class BatchProcessor {
         } finally { if ( $topic_lock ) { $this->queue->unlock_topics(); } }
         if ( is_wp_error( $result ) && 'acm_claim_stopped' !== $result->get_error_code() ) { $this->campaigns->stop( $claim['campaign_id'], 'review', __( 'نتیجه مرحله ذخیره شده اما اعمال آن کامل نشد؛ ادامه همان نتیجه را بدون تولید دوباره بررسی می‌کند. ', 'ai-content-manager' ) . $result->get_error_message() ); }
         return $result;
+    }
+    private function admission_error( $claim, $error ) {
+        $this->campaigns->stop( $claim['campaign_id'], 'review', $error->get_error_message() ); return $error;
     }
 }
