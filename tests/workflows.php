@@ -11,9 +11,29 @@ function user_can( $user, $cap ) { return isset( $user->ID ) && empty( $GLOBALS[
 function wp_slash( $value ) { return is_array( $value ) ? array_map( 'wp_slash', $value ) : ( is_string( $value ) ? addslashes( $value ) : $value ); }
 function get_post( $id ) { return $GLOBALS['fixture_posts'][$id] ?? null; }
 function get_edit_post_link( $id, $context = '' ) { return '/wp-admin/post.php?post=' . $id . '&action=edit'; }
-function get_taxonomy( $taxonomy ) { return 'category' === $taxonomy ? (object) array( 'object_type' => array( 'post' ), 'cap' => (object) array( 'assign_terms' => 'assign_terms' ) ) : false; }
-function get_term( $id, $taxonomy ) { return 3 === $id && 'category' === $taxonomy ? (object) array( 'term_id' => 3, 'taxonomy' => 'category' ) : false; }
-function wp_set_object_terms( $id, $terms, $taxonomy, $append ) { $GLOBALS['assigned_terms'][$id] = $terms; return $terms; }
+function get_taxonomy( $taxonomy ) { return $GLOBALS['fixture_taxonomy_objects'][$taxonomy] ?? false; }
+function get_term( $id, $taxonomy ) { $term = $GLOBALS['fixture_terms'][(int) $id] ?? false; return $term && $term->taxonomy === $taxonomy ? $term : false; }
+function get_terms( $args ) {
+    if ( ! empty( $GLOBALS['term_query_error'] ) ) { return new WP_Error( 'fixture', 'خطای خواندن آزمایشی' ); }
+    return array_values( array_filter( $GLOBALS['fixture_terms'], static function ( $term ) use ( $args ) {
+        return $term->taxonomy === $args['taxonomy'] && ( empty( $GLOBALS['query_language'] ) || 'all' === $GLOBALS['query_language'] || ( $GLOBALS['term_languages'][$term->term_taxonomy_id] ?? null ) === $GLOBALS['query_language'] );
+    } ) );
+}
+function wp_get_object_terms( $id, $taxonomy, $args ) {
+    if ( ! empty( $GLOBALS['term_read_error'] ) ) { return new WP_Error( 'fixture', 'خطای خواندن آزمایشی' ); }
+    return $GLOBALS['assigned_terms'][$id] ?? array();
+}
+function wp_set_object_terms( $id, $terms, $taxonomy, $append ) {
+    $GLOBALS['term_write_calls'] = ( $GLOBALS['term_write_calls'] ?? 0 ) + 1;
+    if ( ! empty( $GLOBALS['term_write_error'] ) ) { return new WP_Error( 'fixture', 'خطای نوشتن آزمایشی' ); }
+    $GLOBALS['assigned_terms'][$id] = $terms;
+    if ( isset( $GLOBALS['during_terms'] ) ) { call_user_func( $GLOBALS['during_terms'], $id, $terms ); }
+    return array_map( static function ( $term ) { return $GLOBALS['fixture_terms'][$term]->term_taxonomy_id; }, $terms );
+}
+function wp_cache_delete( $id, $group ) { $GLOBALS['cache_deletes'][] = array( $id, $group ); return true; }
+$fixture_taxonomy_objects = array( 'category' => (object) array( 'name' => 'category', 'hierarchical' => true, 'show_ui' => true, 'labels' => (object) array( 'name' => 'دسته‌بندی' ), 'object_type' => array( 'post' ), 'cap' => (object) array( 'assign_terms' => 'assign_terms' ) ) );
+$fixture_taxonomies = array( 'post' => $fixture_taxonomy_objects );
+$fixture_terms = array( 3 => (object) array( 'term_id' => 3, 'term_taxonomy_id' => 30, 'taxonomy' => 'category', 'name' => 'دسته آزمایشی' ) );
 function wp_insert_post( $args, $wp_error ) {
     $GLOBALS['insert_calls']++;
     $original = $args;
@@ -82,7 +102,7 @@ class WorkflowDatabase extends FixtureDatabase {
     }
 }
 
-if ( defined( 'ACM_SEO_BOOTSTRAP_ONLY' ) ) { return; }
+if ( defined( 'ACM_SEO_BOOTSTRAP_ONLY' ) || defined( 'ACM_CATEGORY_BOOTSTRAP_ONLY' ) ) { return; }
 
 $wpdb = new WorkflowDatabase();
 $repo = new AIContentManager\Services\QueueRepository();

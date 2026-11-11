@@ -69,6 +69,45 @@ final class Wpml {
         return $labels[ strtolower( substr( $code, 0, 2 ) ) ] ?? $fallback;
     }
 
+    public function language_code( $language ) {
+        $languages = $this->active_languages();
+        $code = isset( $languages[ $language ] ) ? $language : strtolower( substr( $language, 0, 2 ) );
+        return isset( $languages[ $code ] ) ? $code : null;
+    }
+
+    /** Resolve an existing translation only; taxonomy language IDs are term_taxonomy_id. */
+    public function category_for_language( $term, $language ) {
+        if ( ! $this->is_available() || ! apply_filters( 'wpml_is_translated_taxonomy', false, $term->taxonomy ) ) { return $term; }
+        $code = $this->language_code( $language );
+        if ( ! $code ) { return new \WP_Error( 'acm_category_language', __( 'زبان انتخاب‌شده در WPML فعال نیست.', 'ai-content-manager' ) ); }
+        $id = apply_filters( 'wpml_object_id', (int) $term->term_id, $term->taxonomy, false, $code );
+        $translated = ( is_int( $id ) || is_string( $id ) ) && preg_match( '/^[1-9][0-9]*$/D', (string) $id ) ? get_term( (int) $id, $term->taxonomy ) : null;
+        if ( ! $translated || is_wp_error( $translated ) || $translated->taxonomy !== $term->taxonomy || (int) $translated->term_id !== (int) $id ||
+            empty( $translated->term_taxonomy_id ) || $code !== apply_filters( 'wpml_element_language_code', null,
+                array( 'element_id' => (int) $translated->term_taxonomy_id, 'element_type' => $term->taxonomy ) ) ) {
+            return new \WP_Error( 'acm_category_translation', __( 'ترجمه معتبر دسته‌بندی برای زبان محتوا پیدا نشد؛ ابتدا ترجمه را در WPML بررسی کنید. دسته جایگزین یا تازه ساخته نمی‌شود.', 'ai-content-manager' ) );
+        }
+        return $translated;
+    }
+
+    /** Scope term queries and restore even on errors; WPML 4.x and 5.x restore differently. */
+    public function in_language( $language, $callback ) {
+        if ( ! $this->is_available() ) { return call_user_func( $callback ); }
+        $previous = apply_filters( 'wpml_current_language', null );
+        try {
+            do_action( 'wpml_switch_language', $language );
+            return call_user_func( $callback );
+        } finally {
+            $restore = defined( 'ICL_SITEPRESS_VERSION' ) && version_compare( ICL_SITEPRESS_VERSION, '5.0', '<' ) && is_string( $previous ) && '' !== $previous ? $previous : null;
+            do_action( 'wpml_switch_language', $restore );
+        }
+    }
+
+    public function verify_language( $post_id, $post_type, $language ) {
+        return ! $this->is_available() || ( $this->language_code( $language ) && $this->language_code( $language ) ===
+            apply_filters( 'wpml_element_language_code', null, array( 'element_id' => $post_id, 'element_type' => $post_type ) ) );
+    }
+
     /** Assign only the original article language, then read it back; never translate. */
     public function assign_language( $post_id, $post_type, $language ) {
         if ( ! $this->is_available() ) { return true; }

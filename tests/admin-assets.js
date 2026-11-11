@@ -71,4 +71,36 @@ module.exports = (async function () {
     assert.equal(elements['acm-topics'].validityMessage, 'too many');
     assert.equal(formNetworkCalls, 0);
     console.log('PASS: topic modes, independent count, normalized duplicate feedback, limit and zero API calls');
+    const categoryElements = {
+        'acm-content-type': {value: 'post', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }},
+        'acm-language': {value: 'fa', listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }},
+        'acm-category': {options: [
+            {value: '', dataset: {}},
+            {value: 'post|category|3', dataset: {contentType: 'post', languages: 'fa'}},
+            {value: 'post|category|4', dataset: {contentType: 'post', languages: 'en'}},
+            {value: 'post|category|999', dataset: {invalid: '1'}},
+        ], listeners: {}, addEventListener(event, fn) { this.listeners[event] = fn; }, setCustomValidity(value) { this.validityMessage = value; }},
+    };
+    const choice = categoryElements['acm-category'];
+    const selectCategory = index => { choice.selectedIndex = index; choice.value = choice.options[index].value; choice.options.forEach((option, i) => { option.selected = i === index; }); };
+    selectCategory(1);
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../assets/js/content-page.js'), 'utf8'), {
+        document: {getElementById: id => categoryElements[id] || null},
+        acmContentForm: {strings: {categoryMismatch: 'mismatch'}},
+        fetch() { throw new Error('network forbidden'); },
+    });
+    assert.equal(choice.validityMessage, '');
+    assert.equal(choice.options[2].hidden, true);
+    assert.equal(choice.options[2].disabled, true);
+    categoryElements['acm-language'].value = 'en'; categoryElements['acm-language'].listeners.change();
+    assert.equal(choice.value, 'post|category|3');
+    assert.equal(choice.options[1].hidden, false);
+    assert.equal(choice.options[1].disabled, false);
+    assert.equal(choice.validityMessage, 'mismatch');
+    selectCategory(2); choice.listeners.change(); assert.equal(choice.validityMessage, '');
+    categoryElements['acm-content-type'].value = 'page'; categoryElements['acm-content-type'].listeners.change();
+    assert.equal(choice.value, 'post|category|4'); assert.equal(choice.validityMessage, 'mismatch');
+    selectCategory(0); choice.listeners.change(); assert.equal(choice.validityMessage, '');
+    selectCategory(3); choice.listeners.change(); assert.equal(choice.value, 'post|category|999'); assert.equal(choice.validityMessage, 'mismatch');
+    console.log('PASS: category language/type filtering, preserved incompatible selection, explicit empty choice and zero network');
 }());

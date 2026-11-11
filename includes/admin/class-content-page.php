@@ -40,7 +40,7 @@ final class ContentPage {
         wp_enqueue_script( 'acm-content-page', ACM_PLUGIN_URL . 'assets/js/content-page.js', array(), ACM_VERSION, true );
         $limits = \AIContentManager\Services\GenerationPolicy::values();
         wp_localize_script( 'acm-content-page', 'acmContentForm', array( 'limit' => $limits['max_generation_items'] ? min( 100, $limits['max_generation_items'] ) : 100,
-            'strings' => array( 'count' => __( 'تعداد درخواست‌های قابل ثبت: ', 'ai-content-manager' ), 'singleKeyword' => __( 'کلمه کلیدی اصلی', 'ai-content-manager' ), 'sharedKeyword' => __( 'کلمه کلیدی اصلی مشترک', 'ai-content-manager' ), 'singleSecondary' => __( 'کلمات کلیدی کمکی', 'ai-content-manager' ), 'sharedSecondary' => __( 'کلمات کلیدی کمکی مشترک', 'ai-content-manager' ), 'duplicate' => __( 'موضوع تکراری وجود دارد؛ موضوع‌ها را اصلاح کنید.', 'ai-content-manager' ), 'tooMany' => __( 'تعداد موضوع‌ها بیش از سقف مجاز است.', 'ai-content-manager' ) ) ) );
+            'strings' => array( 'count' => __( 'تعداد درخواست‌های قابل ثبت: ', 'ai-content-manager' ), 'singleKeyword' => __( 'کلمه کلیدی اصلی', 'ai-content-manager' ), 'sharedKeyword' => __( 'کلمه کلیدی اصلی مشترک', 'ai-content-manager' ), 'singleSecondary' => __( 'کلمات کلیدی کمکی', 'ai-content-manager' ), 'sharedSecondary' => __( 'کلمات کلیدی کمکی مشترک', 'ai-content-manager' ), 'duplicate' => __( 'موضوع تکراری وجود دارد؛ موضوع‌ها را اصلاح کنید.', 'ai-content-manager' ), 'tooMany' => __( 'تعداد موضوع‌ها بیش از سقف مجاز است.', 'ai-content-manager' ), 'categoryMismatch' => __( 'دسته‌بندی انتخاب‌شده با زبان یا نوع محتوا سازگار نیست؛ آن را صریحاً اصلاح کنید یا «بدون انتخاب» را انتخاب کنید.', 'ai-content-manager' ) ) ) );
     }
 
     /** Render the request form. */
@@ -151,7 +151,7 @@ final class ContentPage {
                         </tr>
                         <tr>
                             <th scope="row"><label for="acm-category"><?php esc_html_e( 'دسته‌بندی', 'ai-content-manager' ); ?></label></th>
-                            <td><select id="acm-category" name="category_choice"><option value=""><?php esc_html_e( 'بدون دسته‌بندی', 'ai-content-manager' ); ?></option><?php $this->render_category_options( $types ); ?></select></td>
+                            <td><select id="acm-category" name="category_choice"><option value=""><?php esc_html_e( 'بدون انتخاب دسته‌بندی', 'ai-content-manager' ); ?></option><?php $this->render_category_options( $types ); ?></select><p class="description"><?php esc_html_e( 'فقط دسته‌بندی هم‌زبان با محتوا مجاز است. انتخاب خالی، دسته پیش‌فرض وردپرس را حذف نمی‌کند. انتخاب ناسازگار خودکار پاک یا جایگزین نمی‌شود.', 'ai-content-manager' ); ?></p></td>
                         </tr>
                         <tr>
                             <th scope="row"><label for="acm-tone"><?php esc_html_e( 'لحن محتوا', 'ai-content-manager' ); ?></label></th>
@@ -209,25 +209,18 @@ final class ContentPage {
 
     /** Add hierarchical taxonomy terms for currently supported post types. */
     private function render_category_options( $types ) {
-        foreach ( $types as $type => $type_label ) {
-            $taxonomies = get_object_taxonomies( $type, 'objects' );
-            foreach ( $taxonomies as $taxonomy ) {
-                if ( empty( $taxonomy->hierarchical ) || empty( $taxonomy->show_ui ) ) {
-                    continue;
-                }
-
-                $terms = get_terms( array( 'taxonomy' => $taxonomy->name, 'hide_empty' => false ) );
-                if ( is_wp_error( $terms ) || ! $terms ) {
-                    continue;
-                }
-                ?>
-                <optgroup label="<?php echo esc_attr( $type_label . ' - ' . $taxonomy->labels->name ); ?>">
-                    <?php foreach ( $terms as $term ) : ?>
-                        <option data-content-type="<?php echo esc_attr( $type ); ?>" value="<?php echo esc_attr( $type . '|' . $taxonomy->name . '|' . $term->term_id ); ?>" <?php selected( $this->value( 'category_choice' ), $type . '|' . $taxonomy->name . '|' . $term->term_id ); ?>><?php echo esc_html( $term->name ); ?></option>
-                    <?php endforeach; ?>
-                </optgroup>
-                <?php
-            }
+        $languages = $this->wpml->active_languages();
+        $options = ( new \AIContentManager\Services\QueueCategory( null, $this->wpml ) )->options( $types, $languages );
+        $selected = $this->value( 'category_choice' );
+        if ( is_wp_error( $options ) ) { echo '<option value="">' . esc_html( $options->get_error_message() ) . '</option>'; $options = array(); }
+        foreach ( $options as $value => $option ) {
+            $labels = array_intersect_key( $languages, array_flip( $option['languages'] ) );
+            echo '<option data-content-type="' . esc_attr( $option['type'] ) . '" data-languages="' . esc_attr( implode( ' ', $option['languages'] ) ) . '" value="' . esc_attr( $value ) . '"';
+            selected( $selected, $value );
+            echo '>' . esc_html( $option['label'] . ' — ' . implode( '، ', $labels ) ) . '</option>';
+        }
+        if ( '' !== $selected && ! isset( $options[ $selected ] ) ) {
+            echo '<option data-invalid="1" value="' . esc_attr( $selected ) . '" selected>' . esc_html__( 'انتخاب قبلی نامعتبر یا در دسترس نیست؛ برای اصلاح دوباره انتخاب کنید: ', 'ai-content-manager' ) . esc_html( $selected ) . '</option>';
         }
     }
 
@@ -291,7 +284,8 @@ final class ContentPage {
             $interval_unit = 'days';
         }
 
-        $category = $this->parse_category( $content_type );
+        $category = $this->parse_category( $content_type, $language );
+        if ( is_wp_error( $category ) ) { $this->validation_error( $category->get_error_message() ); }
         $request  = array(
             'content_type'      => $content_type,
             'mode'              => $mode,
@@ -325,25 +319,9 @@ final class ContentPage {
     }
 
     /** Parse the selected content type's taxonomy and term. */
-    private function parse_category( $content_type ) {
-        if ( empty( $_POST['category_choice'] ) || ! is_string( $_POST['category_choice'] ) ) {
-            return null;
-        }
-
-        $choice = sanitize_text_field( wp_unslash( $_POST['category_choice'] ) );
-        $parts  = explode( '|', $choice );
-        if ( 3 !== count( $parts ) || $parts[0] !== $content_type ) {
-            return null;
-        }
-
-        $taxonomy = sanitize_key( $parts[1] );
-        $term_id  = absint( $parts[2] );
-        $object   = get_taxonomy( $taxonomy );
-        if ( ! $object || ! in_array( $content_type, $object->object_type, true ) || ! term_exists( $term_id, $taxonomy ) ) {
-            return null;
-        }
-
-        return array( 'taxonomy' => $taxonomy, 'term_id' => $term_id );
+    private function parse_category( $content_type, $language ) {
+        $choice = $_POST['category_choice'] ?? '';
+        return ( new \AIContentManager\Services\QueueCategory( null, $this->wpml ) )->parse_choice( is_string( $choice ) ? wp_unslash( $choice ) : $choice, $content_type, $language );
     }
 
     /** Resolve a preset or custom batch size. */

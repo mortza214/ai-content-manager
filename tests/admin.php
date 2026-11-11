@@ -2,7 +2,7 @@
 /** Isolated WordPress contract tests. Network calls are forbidden here. */
 define( 'ABSPATH', __DIR__ );
 define( 'ACM_PLUGIN_URL', 'https://example.test/plugin/' );
-define( 'ACM_VERSION', '0.6.1' );
+define( 'ACM_VERSION', '0.6.2' );
 set_error_handler( function ( $level, $message, $file, $line ) { throw new ErrorException( $message, 0, $level, $file, $line ); } );
 $caps = array( 'edit_posts' => true, 'manage_options' => true, 'manage_ai_content' => true );
 $roles = array( 'administrator' );
@@ -54,7 +54,7 @@ function do_action( $name, ...$args ) { if ( isset( $GLOBALS['action_handlers'][
 function get_locale() { return 'fa_IR'; }
 function wp_timezone() { return new DateTimeZone( 'Asia/Tehran' ); }
 function get_userdata( $id ) { return isset( $GLOBALS['fixture_users'] ) ? ( $GLOBALS['fixture_users'][$id] ?? false ) : (object) array( 'ID' => $id, 'display_name' => 'Test creator' ); }
-function get_object_taxonomies( $type, $format ) { return array(); }
+function get_object_taxonomies( $type, $format ) { return $GLOBALS['fixture_taxonomies'][$type] ?? array(); }
 function selected( $a, $b ) { if ( $a == $b ) { echo ' selected'; } }
 function checked( $a, $b = true ) { if ( $a == $b ) { echo ' checked'; } }
 function add_action( $name, $callback ) { $GLOBALS['actions'][$name][] = $callback; }

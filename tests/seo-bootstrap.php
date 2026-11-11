@@ -41,6 +41,7 @@ verify_bootstrap( '' === ob_get_contents(), 'real plugin bootstrap emits no outp
 $registered = $hooks['admin_post_acm_queue_seo_apply'] ?? array();
 verify_bootstrap( 1 === count( $registered ) && is_callable( $registered[0] ) &&
     $registered[0][0] instanceof AIContentManager\Admin\QueueSeoPage, 'real autoloader resolves namespace and registers SEO handler on plugins_loaded without rendering queue' );
+verify_bootstrap( 1 === count( $hooks['admin_post_acm_queue_category_apply'] ?? array() ) && is_callable( $hooks['admin_post_acm_queue_category_apply'][0] ), 'category repair POST handler registered at bootstrap without queue render' );
 verify_bootstrap( ! in_array( 'admin_menu', $fired, true ) && ! in_array( 'admin_init', $fired, true ), 'admin-post handler exists before admin_init and without executing admin_menu' );
 AIContentManager\Plugin::instance()->init();
 verify_bootstrap( 1 === count( $hooks['admin_post_acm_queue_seo_apply'] ), 'repeated plugin initialization does not duplicate the SEO handler' );

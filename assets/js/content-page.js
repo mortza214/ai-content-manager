@@ -6,6 +6,7 @@
     const topics = document.getElementById('acm-topics');
     const contentType = document.getElementById('acm-content-type');
     const category = document.getElementById('acm-category');
+    const language = document.getElementById('acm-language');
 
     if (mode && topic && topics && typeof acmContentForm !== 'undefined') {
         const syncTopics = function () {
@@ -29,20 +30,20 @@
         syncTopics();
     }
 
-    if (contentType && category) {
+    if (contentType && category && language && typeof acmContentForm !== 'undefined') {
         const syncCategories = function () {
             Array.from(category.options).forEach(function (option) {
-                if (!option.dataset.contentType) {
-                    return;
-                }
-                option.hidden = option.dataset.contentType !== contentType.value;
+                const matches = !option.value || (!option.dataset.invalid && option.dataset.contentType === contentType.value && (option.dataset.languages || '').split(' ').includes(language.value));
+                option.hidden = !matches && !option.selected;
+                option.disabled = !matches && !option.selected;
             });
             const selected = category.options[category.selectedIndex];
-            if (selected && selected.dataset.contentType && selected.dataset.contentType !== contentType.value) {
-                category.value = '';
-            }
+            const valid = !selected || !selected.value || (!selected.dataset.invalid && selected.dataset.contentType === contentType.value && (selected.dataset.languages || '').split(' ').includes(language.value));
+            category.setCustomValidity(valid ? '' : acmContentForm.strings.categoryMismatch);
         };
         contentType.addEventListener('change', syncCategories);
+        language.addEventListener('change', syncCategories);
+        category.addEventListener('change', syncCategories);
         syncCategories();
     }
 }());

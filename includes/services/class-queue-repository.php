@@ -335,9 +335,11 @@ final class QueueRepository {
             if ( $existing ) {
                 $matches = count( $existing ) === count( $items );
                 foreach ( $existing as $index => $row ) {
+                    $stored_payload = json_decode( $row['payload'], true );
+                    if ( is_array( $stored_payload ) ) { unset( $stored_payload['seo_review'], $stored_payload['category_attempt'] ); }
                     if ( ! isset( $items[ $index ] ) || (int) $row['created_by'] !== get_current_user_id() ||
                         $row['content_type'] !== $items[ $index ]['content_type'] || $row['language'] !== $items[ $index ]['language'] ||
-                        json_decode( $row['payload'], true ) !== $items[ $index ]['payload'] ) { $matches = false; break; }
+                        $stored_payload !== $items[ $index ]['payload'] ) { $matches = false; break; }
                 }
                 return $matches ? array_map( 'intval', array_column( $existing, 'item_id' ) ) : new \WP_Error( 'acm_submission_used', __( 'این شناسه ارسال قبلاً با داده دیگری ثبت شده است؛ برای درخواست تازه، فرم را دوباره باز کنید.', 'ai-content-manager' ) );
             }
@@ -390,6 +392,30 @@ final class QueueRepository {
         $ids = $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_content_filtered = %s ORDER BY ID LIMIT 2", $marker ) );
         if ( $wpdb->last_error || count( $ids ) > 1 ) { return $this->storage_error(); }
         return $ids ? (int) $ids[0] : 0;
+    }
+
+    /** Caller holds item lock; baseline is written before language or taxonomy hooks run. */
+    public function save_category_attempt( $item, $attempt ) {
+        global $wpdb;
+        if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
+        $payload = json_decode( $item['payload'], true );
+        if ( ! is_array( $payload ) ) { return $this->storage_error(); }
+        $payload['category_attempt'] = $attempt;
+        $encoded = wp_json_encode( $payload );
+        if ( ! is_string( $encoded ) ) { return $this->storage_error(); }
+        $wpdb->query( 'START TRANSACTION' );
+        $changed = $wpdb->update( $wpdb->prefix . 'acm_queue', array( 'payload' => $encoded ), array( 'item_id' => (int) $item['item_id'],
+            'payload' => $item['payload'], 'post_id' => (int) $item['post_id'], 'draft_token' => $item['draft_token'], 'status' => 'generated' ) );
+        if ( 1 !== $changed || false === $this->append_event( $item['item_id'], 'generated', 'generated', __( 'وضعیت اولیه دسته‌بندی برای تکمیل امن همان پیش‌نویس ثبت شد.', 'ai-content-manager' ) ) || false === $wpdb->query( 'COMMIT' ) ) {
+            $wpdb->query( 'ROLLBACK' ); return $this->storage_error();
+        }
+        return true;
+    }
+
+    public function record_category_result( $item, $category ) {
+        if ( ! current_user_can( 'manage_ai_content' ) ) { return $this->permission_error(); }
+        $message = __( 'دسته‌بندی پیش‌نویس با تأیید صریح کاربر اصلاح و دوباره خوانده شد: ', 'ai-content-manager' ) . wp_json_encode( array( 'post_id' => (int) $item['post_id'], 'taxonomy' => $category['taxonomy'], 'term_id' => $category['term_id'] ) );
+        return false === $this->append_event( $item['item_id'], $item['status'], $item['status'], $message ) ? $this->storage_error() : true;
     }
 
     /** Caller holds item lock and authorizes the linked draft. Preserve the generated history. */

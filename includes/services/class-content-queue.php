@@ -53,6 +53,11 @@ final class ContentQueue {
             return new \WP_Error( 'acm_missing_request_fields', __( 'موضوع و زبان اصلی الزامی هستند.', 'ai-content-manager' ) );
         }
 
+        $category = ( new QueueCategory( $this->repository ) )->validate( $request['category'] ?? null, $request['content_type'], $request['language'] );
+        if ( is_wp_error( $category ) ) { return $category; }
+        if ( array_key_exists( 'category', $request ) ) { $request['category'] = $category; }
+        unset( $request['seo_review'], $request['category_attempt'] );
+
         $primary = $request['primary_keyword'] ?? '';
         if ( ! is_string( $primary ) || preg_match( '/[,،]|\R/u', $primary ) ) {
             return new \WP_Error( 'acm_primary_keyword', __( 'کلمه کلیدی اصلی باید فقط یک عبارت باشد؛ عبارت چندکلمه‌ای مجاز است. عبارت‌های دیگر را در کلمات کلیدی کمکی وارد کنید.', 'ai-content-manager' ) );
