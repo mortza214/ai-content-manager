@@ -28,6 +28,8 @@ final class QueueManagerPage {
     private $recovery;
     private $usage;
     private $seo_page;
+    private $category_page;
+    private $categories;
 
     /** @param QueueRepository $repository Queue persistence layer. */
     public function __construct( $repository, $content_types, $wpml ) {
@@ -37,6 +39,8 @@ final class QueueManagerPage {
         $this->recovery = new \AIContentManager\Services\QueueRecovery( $repository );
         $this->usage = new UsageDashboard( $repository );
         $this->seo_page = new QueueSeoPage( $repository, $this );
+        $this->categories = new \AIContentManager\Services\QueueCategory( $repository, $wpml );
+        $this->category_page = new QueueCategoryPage( $repository, $this, $wpml );
         add_action( 'admin_post_acm_recover_queue', array( $this, 'handle_recovery' ) );
     }
 
@@ -55,6 +59,7 @@ final class QueueManagerPage {
         $languages = $this->wpml->active_languages();
         $this->render_preview();
         $this->seo_page->render();
+        $this->category_page->render();
         ?>
         <div class="wrap">
             <h2><?php esc_html_e( 'مدیریت صف', 'ai-content-manager' ); ?></h2>
@@ -131,7 +136,7 @@ final class QueueManagerPage {
                                     <?php $this->render_item_actions( $item, $filters, $page ); ?>
                                 </td>
                                 <td><?php echo esc_html( $item['item_id'] ); ?></td>
-                                <td><?php echo esc_html( isset( $payload['topic'] ) ? $payload['topic'] : '—' ); ?></td>
+                                <td><?php echo esc_html( isset( $payload['topic'] ) ? $payload['topic'] : '—' ); ?><p><?php echo esc_html__( 'دسته‌بندی صف: ', 'ai-content-manager' ) . esc_html( $this->categories->describe( $payload['category'] ?? null ) ); ?></p></td>
                                 <td><?php $creator = get_userdata( (int) ( $item['created_by'] ?? 0 ) ); echo esc_html( $creator ? $creator->display_name . ' (#' . (int) ( $item['created_by'] ?? 0 ) . ')' : __( 'نامشخص یا کاربر حذف‌شده', 'ai-content-manager' ) ); ?></td>
                                 <td><?php echo esc_html( isset( $types[ $item['content_type'] ] ) ? $types[ $item['content_type'] ] : $item['content_type'] ); ?></td>
                                 <td><?php echo esc_html( isset( $languages[ $item['language'] ] ) ? $languages[ $item['language'] ] . ' (' . $item['language'] . ')' : $item['language'] ); ?></td>
@@ -194,6 +199,8 @@ final class QueueManagerPage {
         $output = json_decode( $item['generated_output'] ?? '', true );
         $metadata = json_decode( $item['api_metadata'] ?? '', true );
         echo '<div class="wrap"><h2>' . esc_html__( 'پیش‌نمایش خروجی', 'ai-content-manager' ) . '</h2>';
+        $payload = json_decode( $item['payload'] ?? '', true );
+        echo '<p><strong>' . esc_html__( 'دسته‌بندی انتخاب‌شده در صف: ', 'ai-content-manager' ) . '</strong>' . esc_html( $this->categories->describe( $payload['category'] ?? null ) ) . '</p>';
         if ( 'trashed' === $item['status'] ) { echo '<p>' . esc_html__( 'این آیتم در زباله‌دان صف است؛ پیش‌نمایش فقط خواندنی است و تولید یا ایجاد پیش‌نویس انجام نمی‌شود.', 'ai-content-manager' ) . '</p>'; }
         if ( ( 'generated' === $item['status'] || ( 'trashed' === $item['status'] && 'generated' === ( $item['previous_status'] ?? '' ) ) ) && is_array( $output ) ) {
             echo '<h2>' . esc_html( $output['title'] ?? '' ) . '</h2>';
@@ -233,6 +240,9 @@ final class QueueManagerPage {
             $post = get_post( (int) $item['post_id'] );
             if ( 'trashed' !== $item['status'] && $post && $post->post_type === $item['content_type'] && current_user_can( 'edit_post', $post->ID ) ) {
                 echo '<a class="button" href="' . esc_url( wp_nonce_url( AdminPage::url( 'queue', array_merge( $filters, array( 'paged' => $page, 'seo_item' => $item['item_id'] ) ) ), 'acm_seo_compare_' . $item['item_id'] ) ) . '">' . esc_html__( 'بررسی و اعمال اطلاعات سئو', 'ai-content-manager' ) . '</a>';
+                if ( 'draft' === $post->post_status ) {
+                    echo '<a class="button" href="' . esc_url( wp_nonce_url( AdminPage::url( 'queue', array( 'category_item' => $item['item_id'] ) ), 'acm_category_compare_' . $item['item_id'] ) ) . '">' . esc_html__( 'بررسی و اصلاح دسته‌بندی', 'ai-content-manager' ) . '</a>';
+                }
             } elseif ( 'trashed' === $item['status'] ) {
                 echo '<button type="button" class="button" disabled>' . esc_html__( 'اطلاعات سئو در زباله‌دان صف غیرفعال است', 'ai-content-manager' ) . '</button>';
             }

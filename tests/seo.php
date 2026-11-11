@@ -5,8 +5,6 @@ ob_start();
 define( 'ACM_SEO_BOOTSTRAP_ONLY', true );
 require __DIR__ . '/workflows.php';
 
-function wp_cache_delete( $id, $group ) { $GLOBALS['cache_deletes'][] = array( $id, $group ); return true; }
-
 class SeoDatabase extends WorkflowDatabase {
     public $fail_proposal = false;
     public $proposal_writes = 0;

@@ -11,11 +11,13 @@ final class DraftCreator {
     private $seo;
     private $seo_result;
     private $completed = false;
-    public function __construct( $repository, $wpml = null, $validator = null, $seo = null ) {
+    private $categories;
+    public function __construct( $repository, $wpml = null, $validator = null, $seo = null, $categories = null ) {
         $this->repository = $repository;
         $this->wpml = $wpml ?: new Wpml();
         $this->validator = $validator ?: new ArticleOutputValidator();
         $this->seo = $seo ?: new QueueSeo( $repository );
+        $this->categories = $categories ?: new QueueCategory( $repository, $this->wpml );
     }
 
     public function seo_result() { return $this->seo_result; }
@@ -46,12 +48,14 @@ final class DraftCreator {
         $output = $this->validator->validate_for_draft( $item['generated_output'] ?? '' );
         if ( is_wp_error( $output ) ) { return $output; }
         $payload = json_decode( $item['payload'], true );
-        $category = $this->validated_category( is_array( $payload ) ? ( $payload['category'] ?? null ) : null, $item['content_type'] );
+        if ( ! is_array( $payload ) ) { return $this->error( __( 'اطلاعات ذخیره‌شده صف قابل خواندن نیست؛ انتخاب دسته‌بندی نمی‌تواند خالی فرض شود.', 'ai-content-manager' ) ); }
+        $category = $this->categories->validate( $payload['category'] ?? null, $item['content_type'], $item['language'], true );
         if ( is_wp_error( $category ) ) { return $category; }
         $post_id = (int) ( $item['post_id'] ?? 0 );
         $state = $item['draft_state'] ?? 'none';
         $token = $item['draft_token'] ?? '';
         $marker = $token ? 'acm-draft:' . (int) $item_id . ':' . $token : '';
+        $created = false;
 
         if ( ! $post_id && $token ) {
             $found = $this->repository->find_draft_marker( $marker );
@@ -90,6 +94,7 @@ final class DraftCreator {
             if ( is_wp_error( $post_id ) || ! $post_id ) {
                 return $this->error( __( 'ایجاد پیش‌نویس کامل نشد؛ نشان تلاش حفظ شده است. اجرای دوباره فقط نوشته دارای همین نشان را بازیابی می‌کند و نسخه دوم نمی‌سازد.', 'ai-content-manager' ) );
             }
+            $created = true;
             $author_note = $author === $creator_id ? __( 'نویسنده از سازنده معتبر صف تعیین شد.', 'ai-content-manager' ) : __( 'سازنده معتبر یا مجاز نبود؛ کاربر اجراکننده نویسنده شد.', 'ai-content-manager' );
         }
 
@@ -98,33 +103,28 @@ final class DraftCreator {
         if ( 'trash' === $post->post_status ) { return $this->error( __( 'نوشته مرتبط در زباله‌دان وردپرس است؛ ابتدا آن را در وردپرس بازگردانید. نوشته دوم ساخته نمی‌شود.', 'ai-content-manager' ) ); }
         if ( $post->post_type !== $item['content_type'] || 'draft' !== $post->post_status ) { return $this->error( __( 'وضعیت یا نوع نوشته مرتبط تغییر کرده است؛ بدون تغییر نوشته، وضعیت واقعی آن را بررسی کنید.', 'ai-content-manager' ) ); }
         if ( ! current_user_can( 'edit_post', $post_id ) ) { return $this->error( __( 'مجوز ویرایش پیش‌نویس مرتبط را ندارید.', 'ai-content-manager' ) ); }
+        if ( ! $token || ( $post->post_content_filtered ?? '' ) !== $marker ) { return $this->error( __( 'نشان پیش‌نویس مرتبط معتبر نیست؛ هیچ نوشته یا دسته‌بندی تغییر نکرد.', 'ai-content-manager' ) ); }
 
         if ( empty( $item['post_id'] ) ) {
             $linked = $this->repository->save_draft_fields( $item_id, array( 'post_id' => (int) $post_id, 'draft_state' => 'linked' ),
                 sprintf( __( 'پیش‌نویس #%d مرتبط شد؛ وضعیت تولید همچنان تولیدشده است. ', 'ai-content-manager' ), $post_id ) . ( $author_note ?? __( 'ارتباط از نشان پایدار تلاش قبلی بازیابی شد.', 'ai-content-manager' ) ) );
             if ( is_wp_error( $linked ) ) { return $linked; }
         }
-        if ( 'ready' === $state ) { return (int) $post_id; }
-        if ( $category ) {
-            $terms = wp_set_object_terms( $post_id, array( $category['term_id'] ), $category['taxonomy'], false );
-            if ( is_wp_error( $terms ) ) { return $this->error( __( 'پیش‌نویس مرتبط شد اما دسته‌بندی کامل نشد؛ اجرای دوباره همان پیش‌نویس را تکمیل می‌کند.', 'ai-content-manager' ) ); }
+        $item = $this->repository->get( $item_id );
+        if ( 'ready' === $state ) {
+            $verified = $this->categories->verify( $item, $category );
+            return is_wp_error( $verified ) ? $verified : (int) $post_id;
         }
+        $prepared = $this->categories->prepare( $item, $category, $created );
+        if ( is_wp_error( $prepared ) ) { return $prepared; }
         $language = $this->wpml->assign_language( $post_id, $item['content_type'], $item['language'] );
         if ( is_wp_error( $language ) ) { return $language; }
+        $assigned = $this->categories->assign( $item, $category );
+        if ( is_wp_error( $assigned ) ) { return $assigned; }
         $ready = $this->repository->save_draft_fields( $item_id, array( 'draft_state' => 'ready' ), sprintf( __( 'پیش‌نویس #%d با موفقیت تکمیل شد؛ انتشار انجام نشد.', 'ai-content-manager' ), $post_id ) );
         $this->completed = ! is_wp_error( $ready );
         return is_wp_error( $ready ) ? $ready : (int) $post_id;
     }
 
-    private function validated_category( $category, $type ) {
-        if ( empty( $category ) ) { return null; }
-        if ( ! is_array( $category ) || ! is_string( $category['taxonomy'] ?? null ) || ! is_scalar( $category['term_id'] ?? null ) ) { return $this->error( __( 'دسته‌بندی ذخیره‌شده معتبر نیست.', 'ai-content-manager' ) ); }
-        $taxonomy = get_taxonomy( $category['taxonomy'] );
-        $term = get_term( (int) $category['term_id'], $category['taxonomy'] );
-        if ( ! $taxonomy || ! in_array( $type, $taxonomy->object_type, true ) || ! $term || is_wp_error( $term ) || $term->taxonomy !== $category['taxonomy'] || ! current_user_can( $taxonomy->cap->assign_terms ) ) {
-            return $this->error( __( 'دسته‌بندی حذف شده، به نوع محتوا مربوط نیست یا مجوز تخصیص آن وجود ندارد.', 'ai-content-manager' ) );
-        }
-        return array( 'taxonomy' => $category['taxonomy'], 'term_id' => (int) $term->term_id );
-    }
     private function error( $message ) { return new \WP_Error( 'acm_draft_error', $message ); }
 }
