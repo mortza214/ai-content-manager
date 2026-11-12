@@ -53,8 +53,13 @@ final class WebResearch {
         if ( ! is_array( $data ) || ( ! empty( $response['metadata']['error_message'] ) && empty( $response['metadata']['billing_persist_failed'] ) ) ) { return $this->error( $response['metadata']['error_message'] ?? __( 'پاسخ پژوهش دریافت نشد.', 'ai-content-manager' ) ); }
         $text = ''; $urls = array(); $searches = 0;
         foreach ( $data['output'] ?? array() as $part ) {
-            if ( 'web_search_call' === ( $part['type'] ?? '' ) && 'completed' === ( $part['status'] ?? '' ) && 'search' === ( $part['action']['type'] ?? '' ) ) {
+            if ( 'web_search_call' === ( $part['type'] ?? '' ) && 'completed' === ( $part['status'] ?? '' ) && in_array( $part['action']['type'] ?? '', array( 'search', 'open_page', 'find_in_page' ), true ) ) {
                 $searches++;
+                // Responses also uses the hosted web tool to open/find an existing source.
+                if ( in_array( $part['action']['type'], array( 'open_page', 'find_in_page' ), true ) ) {
+                    $url = self::safe_url( $part['action']['url'] ?? null );
+                    if ( $url ) { $urls[ $url ] = true; }
+                }
                 foreach ( $part['action']['sources'] ?? array() as $source ) { $url = self::safe_url( $source['url'] ?? null ); if ( $url ) { $urls[ $url ] = true; } }
             }
             if ( 'message' !== ( $part['type'] ?? '' ) ) { continue; }

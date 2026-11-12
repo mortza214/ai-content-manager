@@ -2,7 +2,7 @@
 
 افزونه‌ای فارسی برای تولید دستی و کمپین کلمه کلیدی: موضوع‌یابی مستقل، پژوهش وب با بررسی شواهد و ساخت پیش‌نویس قابل ویرایش در همان صف WordPress. شروع هزینه‌دار کمپین تأیید جداگانه می‌خواهد و تمام خروجی‌ها نیازمند بازبینی انسانی‌اند؛ هیچ نوشته‌ای خودکار منتشر نمی‌شود.
 
-- نسخه افزونه: **۰.۷.۱** (`0.7.1`)
+- نسخه افزونه: **۰.۷.۲** (`0.7.2`)
 - نسخه ساختار دیتابیس: **۱.۴.۰** (`1.4.0`)
 - حداقل اعلام‌شده: WordPress ۶.۰ و PHP ۷.۴؛ اجرای واقعی روی همه این نسخه‌ها تأیید نشده است.
 
@@ -58,6 +58,7 @@ php tests/category.php --wpml4
 php tests/campaigns.php
 php tests/migration.php
 php tests/topic-admission.php
+php tests/web-research-actions.php
 php tests/seo-bootstrap.php --cron
 node tests/admin-assets.js
 ```
